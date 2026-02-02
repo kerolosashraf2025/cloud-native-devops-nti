@@ -6,8 +6,13 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: terraform-main
+  cancel-in-progress: true
+
 jobs:
   terraform:
+    name: Terraform Apply
     runs-on: ubuntu-latest
 
     defaults:
@@ -15,7 +20,7 @@ jobs:
         working-directory: terraform
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Terraform
@@ -43,4 +48,3 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
-
