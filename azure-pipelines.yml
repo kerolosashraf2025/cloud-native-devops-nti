@@ -1,0 +1,50 @@
+trigger:
+- main
+
+variables:
+  TF_VERSION: "1.6.6"
+  TF_ROOT: "terraform"
+  TF_VARS_FILE: "nonprod.tfvars"
+
+stages:
+- stage: Terraform_Apply
+  displayName: "Terraform Apply - NonProd"
+  jobs:
+  - job: Apply
+    displayName: "Apply Infrastructure"
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - checkout: self
+
+    - task: TerraformInstaller@1
+      inputs:
+        terraformVersion: $(TF_VERSION)
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Init"
+      inputs:
+        provider: aws
+        command: init
+        workingDirectory: $(TF_ROOT)
+        backendServiceAWS: aws-nonprod
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Plan"
+      inputs:
+        provider: aws
+        command: plan
+        workingDirectory: $(TF_ROOT)
+        environmentServiceNameAWS: aws-nonprod
+        commandOptions: "-var-file=$(TF_VARS_FILE)"
+
+    - task: TerraformTaskV4@4
+      displayName: "Terraform Apply"
+      inputs:
+        provider: aws
+        command: apply
+        workingDirectory: $(TF_ROOT)
+        environmentServiceNameAWS: aws-nonprod
+        commandOptions: "-auto-approve -var-file=$(TF_VARS_FILE)"
+
