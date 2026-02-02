@@ -5,46 +5,48 @@ variables:
   TF_VERSION: "1.6.6"
   TF_ROOT: "terraform"
   TF_VARS_FILE: "nonprod.tfvars"
+  AWS_DEFAULT_REGION: "us-east-1"
 
 stages:
 - stage: Terraform_Apply
   displayName: "Terraform Apply - NonProd"
   jobs:
   - job: Apply
-    displayName: "Apply Infrastructure"
     pool:
       vmImage: ubuntu-latest
 
     steps:
     - checkout: self
 
-    - task: TerraformInstaller@1
-      inputs:
-        terraformVersion: $(TF_VERSION)
+    - script: |
+        sudo apt-get update
+        sudo apt-get install -y unzip wget
+        wget https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+        unzip terraform_${TF_VERSION}_linux_amd64.zip
+        sudo mv terraform /usr/local/bin/
+        terraform --version
+      displayName: "Install Terraform"
 
-    - task: TerraformTaskV4@4
+    - script: terraform init
+      workingDirectory: $(TF_ROOT)
       displayName: "Terraform Init"
-      inputs:
-        provider: aws
-        command: init
-        workingDirectory: $(TF_ROOT)
-        backendServiceAWS: aws-nonprod
+      env:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-    - task: TerraformTaskV4@4
+    - script: terraform plan -var-file=$(TF_VARS_FILE)
+      workingDirectory: $(TF_ROOT)
       displayName: "Terraform Plan"
-      inputs:
-        provider: aws
-        command: plan
-        workingDirectory: $(TF_ROOT)
-        environmentServiceNameAWS: aws-nonprod
-        commandOptions: "-var-file=$(TF_VARS_FILE)"
+      env:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
 
-    - task: TerraformTaskV4@4
+    - script: terraform apply -auto-approve -var-file=$(TF_VARS_FILE)
+      workingDirectory: $(TF_ROOT)
       displayName: "Terraform Apply"
-      inputs:
-        provider: aws
-        command: apply
-        workingDirectory: $(TF_ROOT)
-        environmentServiceNameAWS: aws-nonprod
-        commandOptions: "-auto-approve -var-file=$(TF_VARS_FILE)"
-
+      env:
+        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+        AWS_DEFAULT_REGION: $(AWS_DEFAULT_REGION)
