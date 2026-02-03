@@ -1,0 +1,38 @@
+name: Cluster Bootstrap
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bootstrap:
+    name: Bootstrap EKS Cluster
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region eu-west-1 \
+            --name $(terraform -chdir=terraform output -raw cluster_name)
+
+      - name: Verify cluster access
+        run: kubectl get nodes
+
+      - name: Create namespaces
+        run: kubectl apply -f bootstrap/namespaces.yaml
+
+      - name: Install ingress-nginx
+        run: bootstrap/helm/ingress-nginx.sh
+
+      - name: Install Argo CD
+        run: bootstrap/helm/argocd.sh
