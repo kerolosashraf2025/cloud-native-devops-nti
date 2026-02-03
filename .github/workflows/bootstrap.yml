@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS credentials
+      # 2️⃣ AWS Credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -25,19 +25,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Update kubeconfig
+      # 3️⃣ kubeconfig
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
             --region $AWS_REGION \
             --name $CLUSTER_NAME
 
-      # 4️⃣ Verify cluster access
+      # 4️⃣ Verify cluster
       - name: Verify cluster access
-        run: |
-          kubectl get nodes
+        run: kubectl get nodes
 
-      # 5️⃣ Install Helm (CORRECT WAY)
+      # 5️⃣ Install Helm (NO helm usage here)
       - name: Install Helm
         run: |
           set -e
@@ -48,22 +47,20 @@ jobs:
           chmod +x $HOME/bin/helm
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      # 6️⃣ Verify Helm
+      # 6️⃣ Verify Helm (NEW STEP)
       - name: Verify Helm installation
         run: |
+          which helm
           helm version
 
-      # 7️⃣ Create namespaces
+      # 7️⃣ Namespaces
       - name: Create namespaces
-        run: |
-          kubectl apply -f bootstrap/namespaces.yaml
+        run: kubectl apply -f bootstrap/namespaces.yaml
 
-      # 8️⃣ Install Ingress NGINX
+      # 8️⃣ Ingress NGINX
       - name: Install Ingress NGINX
-        run: |
-          bash bootstrap/helm/ingress-nginx.sh
+        run: bash bootstrap/helm/ingress-nginx.sh
 
-      # 9️⃣ Install ArgoCD
+      # 9️⃣ ArgoCD
       - name: Install ArgoCD
-        run: |
-          bash bootst
+        run: bash bootstrap/helm/argocd.sh
