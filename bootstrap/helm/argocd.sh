@@ -6,4 +6,5 @@ helm repo update
 
 helm upgrade --install argocd argo/argo-cd \
   --namespace argocd \
-  --create-namespace
+  --create-namespace \
+  --wait=false
