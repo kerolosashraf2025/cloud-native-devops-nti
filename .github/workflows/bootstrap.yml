@@ -1,65 +1,44 @@
 name: Bootstrap EKS Cluster
 
 on:
-  workflow_dispatch:   
+  workflow_dispatch:
 
 jobs:
   bootstrap:
     name: Bootstrap EKS
-    runs-on: self-hosted   
-
-    env:
-      AWS_REGION: eu-west-1   
+    runs-on: self-hosted
 
     steps:
-      # 1️⃣ Checkout Repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Terraform 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.6
-
-      # 3️⃣ Configure AWS Credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: eu-west-1
 
-      # 4️⃣ Terraform init 
-      - name: Terraform Init (read-only)
-        working-directory: terraform
-        run: terraform init -reconfigure
-
-      # 5️⃣ Get EKS Cluster Name from Terraform output
-      - name: Get EKS Cluster Name
-        working-directory: terraform
-        run: |
-          echo "CLUSTER_NAME=$(terraform output -raw eks_cluster_name)" >> $GITHUB_ENV
-
-      # 6️⃣ Update kubeconfig
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
-            --name $CLUSTER_NAME \
-            --region $AWS_REGION
+            --region eu-west-1 \
+            --name nti-nonprod-eks
 
-      # 7️⃣ Verify cluster access
       - name: Verify cluster access
         run: kubectl get nodes
 
-      # 8️⃣ Create namespaces
+      # 
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
       - name: Create namespaces
         run: kubectl apply -f bootstrap/namespaces.yaml
 
-      # 9️⃣ Install Ingress NGINX
       - name: Install Ingress NGINX
         run: bash bootstrap/helm/ingress-nginx.sh
 
-      # 🔟 Install ArgoCD
       - name: Install ArgoCD
         run: bash bootstrap/helm/argocd.sh
