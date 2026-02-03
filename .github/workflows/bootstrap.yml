@@ -1,11 +1,11 @@
-name: Bootstrap EKS
+name: Bootstrap EKS Cluster
 
 on:
   workflow_dispatch:
 
 jobs:
   bootstrap:
-    name: Bootstrap EKS Cluster
+    name: Bootstrap EKS
     runs-on: self-hosted
 
     env:
@@ -13,9 +13,11 @@ jobs:
       CLUSTER_NAME: nti-nonprod-eks
 
     steps:
+      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -23,19 +25,19 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # 3️⃣ Update kubeconfig
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
             --region $AWS_REGION \
             --name $CLUSTER_NAME
 
+      # 4️⃣ Verify cluster access
       - name: Verify cluster access
         run: |
           kubectl get nodes
 
-      # =======================
-      # Install Helm (NO sudo)
-      # =======================
+      # 5️⃣ Install Helm (CORRECT WAY)
       - name: Install Helm
         run: |
           set -e
@@ -45,25 +47,23 @@ jobs:
           mv linux-amd64/helm $HOME/bin/helm
           chmod +x $HOME/bin/helm
           echo "$HOME/bin" >> $GITHUB_PATH
+
+      # 6️⃣ Verify Helm
+      - name: Verify Helm installation
+        run: |
           helm version
 
-      # =======================
-      # Create namespaces
-      # =======================
+      # 7️⃣ Create namespaces
       - name: Create namespaces
         run: |
           kubectl apply -f bootstrap/namespaces.yaml
 
-      # =======================
-      # Install Ingress NGINX
-      # =======================
+      # 8️⃣ Install Ingress NGINX
       - name: Install Ingress NGINX
         run: |
           bash bootstrap/helm/ingress-nginx.sh
 
-      # =======================
-      # Install ArgoCD
-      # =======================
+      # 9️⃣ Install ArgoCD
       - name: Install ArgoCD
         run: |
-          bash bootstrap/helm/argocd.sh
+          bash bootst
