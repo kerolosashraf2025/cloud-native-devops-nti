@@ -48,8 +48,9 @@ jobs:
           echo "$HOME/bin" >> $GITHUB_PATH
 
       # 6️⃣ Verify Helm (NEW STEP)
-      - name: Verify Helm installation
+      - name: Verify Helm
         run: |
+          echo "PATH=$PATH"
           which helm
           helm version
 
