@@ -9,9 +9,15 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      # =========================
+      # Checkout
+      # =========================
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # =========================
+      # Configure AWS credentials
+      # =========================
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -19,26 +25,49 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
+      # =========================
+      # Update kubeconfig
+      # =========================
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
             --region eu-west-1 \
             --name nti-nonprod-eks
 
+      # =========================
+      # Verify cluster access
+      # =========================
       - name: Verify cluster access
         run: kubectl get nodes
 
-      # 
+      # =========================
+      # Install Helm (SAFE WAY)
+      # =========================
       - name: Install Helm
         run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          set -e
+          curl -fsSL https://get.helm.sh/helm-v3.14.4-linux-amd64.tar.gz -o helm.tar.gz
+          tar -xzf helm.tar.gz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
           helm version
 
+      # =========================
+      # Create namespaces
+      # =========================
       - name: Create namespaces
-        run: kubectl apply -f bootstrap/namespaces.yaml
+        run: |
+          kubectl apply -f bootstrap/namespaces.yaml
 
+      # =========================
+      # Install Ingress NGINX
+      # =========================
       - name: Install Ingress NGINX
-        run: bash bootstrap/helm/ingress-nginx.sh
+        run: |
+          bash bootstrap/helm/ingress-nginx.sh
 
+      # =========================
+      # Install ArgoCD
+      # =========================
       - name: Install ArgoCD
-        run: bash bootstrap/helm/argocd.sh
+        run: |
+          bash bootstrap/helm/argocd.sh
