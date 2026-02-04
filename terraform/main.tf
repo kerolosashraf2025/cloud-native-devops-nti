@@ -34,8 +34,8 @@ module "eks" {
   instance_types = var.instance_types
   capacity_type  = var.capacity_type
 
-  private_subnet_ids     = module.networking.private_subnet_ids
-  eks_cluster_role_arn   = module.iam.eks_cluster_role_arn
-  node_group_role_arn    = module.iam.node_group_role_arn
-  tags                   = var.tags
+  private_subnet_ids   = module.networking.private_subnet_ids
+  eks_cluster_role_arn = module.iam.eks_cluster_role_arn
+  node_group_role_arn  = module.iam.node_group_role_arn
+  tags                 = var.tags
 }

@@ -23,17 +23,14 @@ jobs:
         working-directory: terraform
 
     steps:
-      # 1️⃣ Checkout Repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Terraform
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-      # 3️⃣ Configure AWS Credentials
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -41,26 +38,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
-      # 4️⃣ Terraform Init
       - name: Terraform Init
         run: terraform init
 
-      # 5️⃣ Terraform Plan (Apply only)
+      # ==========================
+      # APPLY FLOW
+      # ==========================
       - name: Terraform Plan
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform plan -var-file=nonprod.tfvars
 
-      # 6️⃣ Terraform Apply
       - name: Terraform Apply
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
-      # ===============================
-      # Destroy Flow (Cleanup First)
-      # ===============================
+      # ==========================
+      # DESTROY FLOW
+      # ==========================
 
-      # 7️⃣ Install kubectl (Destroy only) - No apt-get
-      - name: Install kubectl
+      - name: Install kubectl (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           if command -v kubectl >/dev/null 2>&1; then
@@ -75,18 +71,15 @@ jobs:
           sudo mv kubectl /usr/local/bin/kubectl
           kubectl version --client || true
 
-      # 8️⃣ Detect EKS Cluster (Destroy only) - Safe AWS detection
-      - name: Detect EKS Cluster
+      - name: Detect EKS Cluster (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
         id: detect_cluster
         continue-on-error: true
         run: |
-          echo "Searching for EKS clusters in region eu-west-1..."
-
           CLUSTER_NAME=$(aws eks list-clusters --region eu-west-1 --query "clusters[0]" --output text 2>/dev/null || echo "")
 
           if [ "$CLUSTER_NAME" = "None" ] || [ -z "$CLUSTER_NAME" ]; then
-            echo "No EKS cluster found. Skipping cleanup."
+            echo "No EKS cluster found."
             echo "has_cluster=false" >> $GITHUB_OUTPUT
           else
             echo "Found cluster: $CLUSTER_NAME"
@@ -94,22 +87,20 @@ jobs:
             echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
           fi
 
-      # 9️⃣ Update kubeconfig (only if cluster exists)
-      - name: Update kubeconfig
+      - name: Update kubeconfig (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' && steps.detect_cluster.outputs.has_cluster == 'true' }}
         continue-on-error: true
         run: |
           aws eks update-kubeconfig --region eu-west-1 --name "${{ steps.detect_cluster.outputs.cluster_name }}" || true
 
-      # 🔟 Cleanup Kubernetes Resources (only if cluster exists)
-      - name: Cleanup Kubernetes Resources
+      - name: Cleanup Kubernetes Resources (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' && steps.detect_cluster.outputs.has_cluster == 'true' }}
         continue-on-error: true
         run: |
           echo "Deleting ingress resources..."
           kubectl delete ingress --all -A --ignore-not-found=true || true
 
-          echo "Deleting services of type LoadBalancer..."
+          echo "Deleting LoadBalancer services..."
           kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' \
             | while read ns name; do
                 if [ -n "$ns" ] && [ -n "$name" ]; then
@@ -123,10 +114,38 @@ jobs:
           kubectl delete ns argocd --ignore-not-found=true || true
           kubectl delete ns datadog --ignore-not-found=true || true
 
-          echo "Waiting 240 seconds for AWS cleanup..."
+      - name: Extra wait for AWS cleanup (Destroy only)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "Waiting 300 seconds for AWS cleanup..."
+          sleep 300
+
+      # 🔥 Destroy EKS First (Most important)
+      - name: Terraform Destroy EKS
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
+        run: terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks
+
+      - name: Extra wait after EKS destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "Waiting 240 seconds after EKS destroy..."
           sleep 240
 
-      # 11️⃣ Terraform Destroy
-      - name: Terraform Destroy
+      # 🔥 Destroy Networking
+      - name: Terraform Destroy Networking
         if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
+        run: terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking
+
+      # 🔥 Destroy IAM
+      - name: Terraform Destroy IAM
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
+        run: terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam
+
+      # 🔥 Final cleanup run (will not touch ECR if prevent_destroy exists)
+      - name: Terraform Final Destroy (Ignore ECR)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
         run: terraform destroy -auto-approve -var-file=nonprod.tfvars
