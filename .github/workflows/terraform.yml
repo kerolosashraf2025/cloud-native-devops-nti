@@ -55,7 +55,70 @@ jobs:
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
-      # 7️⃣ Terraform Destroy
+      # ===============================
+      # Destroy Flow (Cleanup First)
+      # ===============================
+
+      # 7️⃣ Install kubectl (Destroy only)
+      - name: Install kubectl
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      # 8️⃣ Update kubeconfig (Destroy only)
+      - name: Update kubeconfig
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+          echo "Cluster Name: $CLUSTER_NAME"
+          aws eks update-kubeconfig --region eu-west-1 --name $CLUSTER_NAME
+
+      # 9️⃣ Cleanup Kubernetes Resources (Destroy only)
+      - name: Cleanup Kubernetes Resources
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
+        run: |
+          echo "Deleting sample app resources (if exists)..."
+          kubectl delete -k ../gitops/nonprod/sample-app --ignore-not-found=true || true
+
+          echo "Deleting ingress resources (safety cleanup)..."
+          kubectl delete ingress --all -A --ignore-not-found=true || true
+
+          echo "Deleting services of type LoadBalancer (safety cleanup)..."
+          kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' \
+            | while read ns name; do
+                if [ -n "$ns" ] && [ -n "$name" ]; then
+                  echo "Deleting LoadBalancer service: $ns/$name"
+                  kubectl delete svc -n "$ns" "$name" --ignore-not-found=true || true
+                fi
+              done
+
+          echo "Deleting namespaces that create AWS LoadBalancers..."
+          kubectl delete ns ingress-nginx --ignore-not-found=true || true
+          kubectl delete ns argocd --ignore-not-found=true || true
+          kubectl delete ns datadog --ignore-not-found=true || true
+
+          echo "Waiting for LoadBalancer services to disappear..."
+          for i in {1..30}; do
+            LB_COUNT=$(kubectl get svc -A 2>/dev/null | grep -c LoadBalancer || true)
+            if [ "$LB_COUNT" -eq 0 ]; then
+              echo "No LoadBalancer services found ✅"
+              break
+            fi
+            echo "Still have LoadBalancer services... waiting (attempt $i/30)"
+            sleep 20
+          done
+
+      # 10️⃣ Extra wait for AWS cleanup
+      - name: Extra wait for AWS cleanup
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "Waiting extra 180 seconds for AWS ENIs/ELB cleanup..."
+          sleep 180
+
+      # 11️⃣ Terraform Destroy
       - name: Terraform Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: terraform destroy -auto-approve -var-file=nonprod.tfvars
