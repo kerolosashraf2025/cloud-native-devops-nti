@@ -1,24 +1,26 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
-NAMESPACE=datadog
+NAMESPACE="datadog"
+RELEASE_NAME="datadog"
 
-echo "Creating datadog namespace (if not exists)"
-kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+echo "👉 Creating datadog namespace (if not exists)"
+kubectl get namespace $NAMESPACE >/dev/null 2>&1 || kubectl create namespace $NAMESPACE
 
-echo "Creating Datadog secret"
+echo "👉 Creating Datadog secret"
+kubectl delete secret datadog-secret -n $NAMESPACE --ignore-not-found
 kubectl create secret generic datadog-secret \
-  --from-literal=api-key=$DATADOG_API_KEY \
-  -n $NAMESPACE \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --from-literal=api-key="${DATADOG_API_KEY}" \
+  -n $NAMESPACE
 
-echo "Adding Datadog Helm repo"
+echo "👉 Adding Datadog Helm repo"
 helm repo add datadog https://helm.datadoghq.com
 helm repo update
 
-echo "Installing Datadog Agent"
-helm upgrade --install datadog datadog/datadog \
-  -n $NAMESPACE \
-  -f bootstrap/datadog/datadog-values.yaml
+echo "👉 Installing / Upgrading Datadog Agent"
+helm upgrade --install $RELEASE_NAME datadog/datadog \
+  --namespace $NAMESPACE \
+  -f bootstrap/helm/datadog/datadog-values.yaml \
+  --set datadog.clusterName="${CLUSTER_NAME}"
 
-echo "Datadog installation completed"
+echo "✅ Datadog installation completed"
