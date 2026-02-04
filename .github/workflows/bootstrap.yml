@@ -68,7 +68,7 @@ jobs:
 
       # 🔟 Datadog
       - name: Install Datadog
+        run: bash bootstrap/helm/datadog/install-datadog.sh
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
-        run: bash bootstrap/datadog/install-datadog.sh
