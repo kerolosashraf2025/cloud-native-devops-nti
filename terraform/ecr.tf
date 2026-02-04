@@ -9,6 +9,10 @@ resource "aws_ecr_repository" "sample_app" {
   encryption_configuration {
     encryption_type = "AES256"
   }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 output "ecr_repository_url" {
