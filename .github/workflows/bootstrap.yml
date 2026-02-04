@@ -36,7 +36,7 @@ jobs:
       - name: Verify cluster access
         run: kubectl get nodes
 
-      # 5️⃣ Install Helm (NO helm usage here)
+      # 5️⃣ Install Helm
       - name: Install Helm
         run: |
           set -e
@@ -47,7 +47,7 @@ jobs:
           chmod +x $HOME/bin/helm
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      # 6️⃣ Verify Helm (NEW STEP)
+      # 6️⃣ Verify Helm
       - name: Verify Helm
         run: |
           echo "PATH=$PATH"
@@ -65,3 +65,10 @@ jobs:
       # 9️⃣ ArgoCD
       - name: Install ArgoCD
         run: bash bootstrap/helm/argocd.sh
+
+      # 🔟 Datadog
+      - name: Install Datadog
+        env:
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
+        run: bash bootstrap/datadog/install-datadog.sh

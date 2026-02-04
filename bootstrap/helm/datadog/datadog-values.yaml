@@ -1,0 +1,22 @@
+datadog:
+  site: datadoghq.eu
+  apiKeyExistingSecret: datadog-secret
+
+  logs:
+    enabled: true
+    containerCollectAll: true
+
+  apm:
+    enabled: true
+
+  processAgent:
+    enabled: true
+
+  kubeStateMetricsEnabled: true
+
+agents:
+  enabled: true
+
+clusterAgent:
+  enabled: true
+
