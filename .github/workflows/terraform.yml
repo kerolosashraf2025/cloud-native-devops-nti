@@ -59,7 +59,7 @@ jobs:
       # Destroy Flow (Cleanup First)
       # ===============================
 
-      # 7️⃣ Install kubectl (Destroy only) - NO APT (Stable)
+      # 7️⃣ Install kubectl (Destroy only)
       - name: Install kubectl
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
@@ -75,17 +75,31 @@ jobs:
           sudo mv kubectl /usr/local/bin/kubectl
           kubectl version --client
 
-      # 8️⃣ Update kubeconfig (Destroy only)
-      - name: Update kubeconfig
+      # 8️⃣ Check if EKS cluster output exists (Destroy only)
+      - name: Check EKS Cluster Output
         if: ${{ github.event.inputs.action == 'destroy' }}
+        id: check_cluster
         run: |
-          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
-          echo "Cluster Name: $CLUSTER_NAME"
-          aws eks update-kubeconfig --region eu-west-1 --name $CLUSTER_NAME
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || true)
 
-      # 9️⃣ Cleanup Kubernetes Resources (Destroy only)
+          if [ -z "$CLUSTER_NAME" ]; then
+            echo "No EKS cluster output found. Skipping kubeconfig + cleanup."
+            echo "has_cluster=false" >> $GITHUB_OUTPUT
+          else
+            echo "Cluster Name: $CLUSTER_NAME"
+            echo "has_cluster=true" >> $GITHUB_OUTPUT
+            echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      # 9️⃣ Update kubeconfig (only if cluster exists)
+      - name: Update kubeconfig
+        if: ${{ github.event.inputs.action == 'destroy' && steps.check_cluster.outputs.has_cluster == 'true' }}
+        run: |
+          aws eks update-kubeconfig --region eu-west-1 --name ${{ steps.check_cluster.outputs.cluster_name }}
+
+      # 🔟 Cleanup Kubernetes Resources (only if cluster exists)
       - name: Cleanup Kubernetes Resources
-        if: ${{ github.event.inputs.action == 'destroy' }}
+        if: ${{ github.event.inputs.action == 'destroy' && steps.check_cluster.outputs.has_cluster == 'true' }}
         continue-on-error: true
         run: |
           echo "Deleting sample app resources (if exists)..."
@@ -119,14 +133,14 @@ jobs:
             sleep 15
           done
 
-      # 10️⃣ Extra wait for AWS cleanup (ENIs / ELB)
+      # 11️⃣ Extra wait for AWS cleanup (only if cluster existed)
       - name: Extra wait for AWS cleanup
-        if: ${{ github.event.inputs.action == 'destroy' }}
+        if: ${{ github.event.inputs.action == 'destroy' && steps.check_cluster.outputs.has_cluster == 'true' }}
         run: |
           echo "Waiting extra 240 seconds for AWS ENIs/ELB cleanup..."
           sleep 240
 
-      # 11️⃣ Terraform Destroy
+      # 12️⃣ Terraform Destroy
       - name: Terraform Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: terraform destroy -auto-approve -var-file=nonprod.tfvars
