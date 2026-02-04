@@ -59,12 +59,20 @@ jobs:
       # Destroy Flow (Cleanup First)
       # ===============================
 
-      # 7️⃣ Install kubectl (Destroy only) - FIXED VERSION
+      # 7️⃣ Install kubectl (Destroy only) - NO APT (Stable)
       - name: Install kubectl
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y kubectl
+          if command -v kubectl >/dev/null 2>&1; then
+            echo "kubectl already installed ✅"
+            kubectl version --client
+            exit 0
+          fi
+
+          KUBECTL_VERSION="v1.29.0"
+          curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
           kubectl version --client
 
       # 8️⃣ Update kubeconfig (Destroy only)
@@ -83,7 +91,7 @@ jobs:
           echo "Deleting sample app resources (if exists)..."
           kubectl delete -k ../gitops/nonprod/sample-app --ignore-not-found=true || true
 
-          echo "Deleting ingress resources (safety cleanup)..."
+          echo "Deleting all ingress resources (safety cleanup)..."
           kubectl delete ingress --all -A --ignore-not-found=true || true
 
           echo "Deleting services of type LoadBalancer (safety cleanup)..."
@@ -101,22 +109,22 @@ jobs:
           kubectl delete ns datadog --ignore-not-found=true || true
 
           echo "Waiting for LoadBalancer services to disappear..."
-          for i in {1..30}; do
+          for i in {1..40}; do
             LB_COUNT=$(kubectl get svc -A 2>/dev/null | grep -c LoadBalancer || true)
             if [ "$LB_COUNT" -eq 0 ]; then
               echo "No LoadBalancer services found ✅"
               break
             fi
-            echo "Still have LoadBalancer services... waiting (attempt $i/30)"
-            sleep 20
+            echo "Still have LoadBalancer services... waiting (attempt $i/40)"
+            sleep 15
           done
 
-      # 10️⃣ Extra wait for AWS cleanup
+      # 10️⃣ Extra wait for AWS cleanup (ENIs / ELB)
       - name: Extra wait for AWS cleanup
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          echo "Waiting extra 180 seconds for AWS ENIs/ELB cleanup..."
-          sleep 180
+          echo "Waiting extra 240 seconds for AWS ENIs/ELB cleanup..."
+          sleep 240
 
       # 11️⃣ Terraform Destroy
       - name: Terraform Destroy
