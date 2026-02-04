@@ -59,13 +59,13 @@ jobs:
       # Destroy Flow (Cleanup First)
       # ===============================
 
-      # 7️⃣ Install kubectl (Destroy only)
+      # 7️⃣ Install kubectl (Destroy only) - FIXED VERSION
       - name: Install kubectl
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/kubectl
+          sudo apt-get update -y
+          sudo apt-get install -y kubectl
+          kubectl version --client
 
       # 8️⃣ Update kubeconfig (Destroy only)
       - name: Update kubeconfig
