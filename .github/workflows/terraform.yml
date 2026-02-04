@@ -59,13 +59,13 @@ jobs:
       # Destroy Flow (Cleanup First)
       # ===============================
 
-      # 7️⃣ Install kubectl (Destroy only)
+      # 7️⃣ Install kubectl (Destroy only) - Stable Method (No apt-get)
       - name: Install kubectl
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           if command -v kubectl >/dev/null 2>&1; then
             echo "kubectl already installed ✅"
-            kubectl version --client
+            kubectl version --client || true
             exit 0
           fi
 
@@ -73,42 +73,50 @@ jobs:
           curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
-          kubectl version --client
+          kubectl version --client || true
 
-      # 8️⃣ Check if EKS cluster output exists (Destroy only)
-      - name: Check EKS Cluster Output
+      # 8️⃣ Detect if EKS cluster exists in state (Destroy only)
+      - name: Detect EKS Cluster Name
         if: ${{ github.event.inputs.action == 'destroy' }}
-        id: check_cluster
+        id: detect_cluster
+        continue-on-error: true
         run: |
-          CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || true)
+          echo "Trying to detect EKS cluster name from state..."
+
+          CLUSTER_NAME=$(terraform console <<EOF
+try(module.eks.cluster_name, "")
+EOF
+          )
+
+          CLUSTER_NAME=$(echo "$CLUSTER_NAME" | tr -d '"' | xargs)
 
           if [ -z "$CLUSTER_NAME" ]; then
-            echo "No EKS cluster output found. Skipping kubeconfig + cleanup."
+            echo "No cluster found in state. Skipping kubeconfig + cleanup."
             echo "has_cluster=false" >> $GITHUB_OUTPUT
           else
-            echo "Cluster Name: $CLUSTER_NAME"
+            echo "Cluster found: $CLUSTER_NAME"
             echo "has_cluster=true" >> $GITHUB_OUTPUT
             echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
           fi
 
-      # 9️⃣ Update kubeconfig (only if cluster exists)
+      # 9️⃣ Update kubeconfig (Only if cluster exists)
       - name: Update kubeconfig
-        if: ${{ github.event.inputs.action == 'destroy' && steps.check_cluster.outputs.has_cluster == 'true' }}
-        run: |
-          aws eks update-kubeconfig --region eu-west-1 --name ${{ steps.check_cluster.outputs.cluster_name }}
-
-      # 🔟 Cleanup Kubernetes Resources (only if cluster exists)
-      - name: Cleanup Kubernetes Resources
-        if: ${{ github.event.inputs.action == 'destroy' && steps.check_cluster.outputs.has_cluster == 'true' }}
+        if: ${{ github.event.inputs.action == 'destroy' && steps.detect_cluster.outputs.has_cluster == 'true' }}
         continue-on-error: true
         run: |
-          echo "Deleting sample app resources (if exists)..."
-          kubectl delete -k ../gitops/nonprod/sample-app --ignore-not-found=true || true
+          aws eks update-kubeconfig --region eu-west-1 --name "${{ steps.detect_cluster.outputs.cluster_name }}" || true
 
-          echo "Deleting all ingress resources (safety cleanup)..."
+      # 🔟 Cleanup Kubernetes Resources (Only if cluster exists)
+      - name: Cleanup Kubernetes Resources
+        if: ${{ github.event.inputs.action == 'destroy' && steps.detect_cluster.outputs.has_cluster == 'true' }}
+        continue-on-error: true
+        run: |
+          echo "Deleting ingress resources..."
           kubectl delete ingress --all -A --ignore-not-found=true || true
 
-          echo "Deleting services of type LoadBalancer (safety cleanup)..."
+          echo "Deleting services of type LoadBalancer..."
+          kubectl get svc -A 2>/dev/null | grep LoadBalancer || echo "No LoadBalancer services found"
+
           kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' \
             | while read ns name; do
                 if [ -n "$ns" ] && [ -n "$name" ]; then
@@ -122,20 +130,20 @@ jobs:
           kubectl delete ns argocd --ignore-not-found=true || true
           kubectl delete ns datadog --ignore-not-found=true || true
 
-          echo "Waiting for LoadBalancer services to disappear..."
+          echo "Waiting for LoadBalancer services cleanup..."
           for i in {1..40}; do
             LB_COUNT=$(kubectl get svc -A 2>/dev/null | grep -c LoadBalancer || true)
             if [ "$LB_COUNT" -eq 0 ]; then
               echo "No LoadBalancer services found ✅"
               break
             fi
-            echo "Still have LoadBalancer services... waiting (attempt $i/40)"
+            echo "Still LoadBalancer services exist... waiting ($i/40)"
             sleep 15
           done
 
-      # 11️⃣ Extra wait for AWS cleanup (only if cluster existed)
+      # 11️⃣ Extra wait for AWS cleanup
       - name: Extra wait for AWS cleanup
-        if: ${{ github.event.inputs.action == 'destroy' && steps.check_cluster.outputs.has_cluster == 'true' }}
+        if: ${{ github.event.inputs.action == 'destroy' && steps.detect_cluster.outputs.has_cluster == 'true' }}
         run: |
           echo "Waiting extra 240 seconds for AWS ENIs/ELB cleanup..."
           sleep 240
