@@ -5,19 +5,12 @@ on:
 
 jobs:
   deploy:
-    name: Deploy Sample App via ArgoCD
     runs-on: self-hosted
 
-    defaults:
-      run:
-        shell: bash
-
     steps:
-      # 1️⃣ Checkout Repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Configure AWS Credentials
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -25,43 +18,57 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
-      # 3️⃣ Install kubectl (FAST & SAFE)
-      - name: Install kubectl
+      - name: Install kubectl (if missing)
         run: |
-          if command -v kubectl >/dev/null 2>&1; then
-            echo "kubectl already installed ✅"
-            kubectl version --client
-          else
-            echo "Installing kubectl..."
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
-            kubectl version --client
+          if ! command -v kubectl &>/dev/null; then
+            sudo apt-get update -y
+            sudo apt-get install -y kubectl
           fi
+          kubectl version --client
 
-      # 4️⃣ Update kubeconfig
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig --region eu-west-1 --name nti-nonprod-eks
           kubectl get nodes
 
-      # 5️⃣ Apply ArgoCD Application (Deploy Sample App)
+      - name: Delete old conflicting ArgoCD application (if exists)
+        continue-on-error: true
+        run: |
+          kubectl delete application sample-app-nonprod -n argocd --ignore-not-found=true
+          kubectl delete application sample-app-old -n argocd --ignore-not-found=true
+
+      - name: Get latest ECR image tag
+        run: |
+          LATEST_TAG=$(aws ecr describe-images \
+            --repository-name cloud-native-sample-app \
+            --region eu-west-1 \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+            --output text)
+
+          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
+          echo "Latest tag found: $LATEST_TAG"
+
+      - name: Update deployment image tag
+        run: |
+          sed -i "s|image: .*cloud-native-sample-app:.*|image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:$LATEST_TAG|g" gitops/nonprod/sample-app/deployment.yaml
+          echo "Deployment updated with latest tag:"
+          cat gitops/nonprod/sample-app/deployment.yaml
+
       - name: Apply ArgoCD Application
         run: |
           kubectl apply -f gitops/nonprod/argocd/sample-app-application.yaml
-          kubectl get applications -n argocd
 
-      # 6️⃣ Wait for ArgoCD App Sync
-      - name: Wait for Application to be Healthy
+      - name: Wait for ArgoCD application to be Healthy and Synced
         run: |
           echo "Waiting for ArgoCD Application to be Healthy..."
-          for i in {1..30}; do
-            STATUS=$(kubectl get application sample-app -n argocd -o jsonpath="{.status.health.status}" 2>/dev/null || echo "NotFound")
-            SYNC=$(kubectl get application sample-app -n argocd -o jsonpath="{.status.sync.status}" 2>/dev/null || echo "NotFound")
 
-            echo "Health: $STATUS | Sync: $SYNC"
+          for i in {1..60}; do
+            HEALTH=$(kubectl get application sample-app -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "NotFound")
+            SYNC=$(kubectl get application sample-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "OutOfSync")
 
-            if [[ "$STATUS" == "Healthy" && "$SYNC" == "Synced" ]]; then
+            echo "Health: $HEALTH | Sync: $SYNC"
+
+            if [[ "$HEALTH" == "Healthy" && "$SYNC" == "Synced" ]]; then
               echo "Application is Healthy and Synced ✅"
               exit 0
             fi
@@ -73,10 +80,7 @@ jobs:
           kubectl get application sample-app -n argocd -o yaml
           exit 1
 
-      # 7️⃣ Print Ingress URL
       - name: Show Ingress URL
         run: |
-          echo "Ingress Info:"
           kubectl get ingress -A
-          echo "LoadBalancer Services:"
-          kubectl get svc -A | grep LoadBalancer || true
+          kubectl get svc -n ingress-nginx
