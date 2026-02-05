@@ -5,7 +5,7 @@ const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
   res.json({
-    message: "Cloud-Native DevOps Sample App is running 🚀",
+    message: "Version 2 Running 🚀🚀",
     status: "ok"
   });
 });
