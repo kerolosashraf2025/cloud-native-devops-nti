@@ -7,7 +7,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/kerolosashraf2025/cloud-native-devops-nti
+    repoURL: https://github.com/kerolosashraf2025/cloud-native-devops-nti.git
     targetRevision: main
     path: gitops/nonprod/sample-app
 

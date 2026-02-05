@@ -1,0 +1,40 @@
+name: ArgoCD Deploy Sample App
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Sample App via ArgoCD
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Install kubectl
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y kubectl
+          kubectl version --client
+
+      - name: Update kubeconfig
+        working-directory: terraform
+        run: |
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+          aws eks update-kubeconfig --region eu-west-1 --name $CLUSTER_NAME
+
+      - name: Apply ArgoCD Application
+        run: |
+          kubectl apply -f gitops/nonprod/sample-app/argocd-app.yaml
+
+      - name: Check Application Status
+        run: |
+          kubectl get applications -n argocd
