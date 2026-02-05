@@ -13,6 +13,9 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,7 +40,24 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
+      - name: Update GitOps Deployment Image Tag
+        run: |
+          echo "Updating deployment.yaml with new image tag..."
+          sed -i "s|image: .*cloud-native-sample-app:.*|image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:${{ github.sha }}|g" gitops/nonprod/sample-app/deployment.yaml
+
+          echo "Updated file content:"
+          cat gitops/nonprod/sample-app/deployment.yaml
+
+      - name: Commit & Push GitOps changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add gitops/nonprod/sample-app/deployment.yaml
+          git commit -m "Update sample-app image tag to ${{ github.sha }}" || echo "No changes to commit"
+          git push origin main
+
       - name: Print Image URI
         run: |
           echo "Image pushed successfully 🎉"
-#####
+          echo "842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:${{ github.sha }}"
