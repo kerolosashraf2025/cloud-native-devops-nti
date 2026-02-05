@@ -40,3 +40,4 @@ jobs:
       - name: Print Image URI
         run: |
           echo "Image pushed successfully 🎉"
+#####
