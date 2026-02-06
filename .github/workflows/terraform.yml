@@ -38,9 +38,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
-      - name: Verify AWS Identity
-        run: aws sts get-caller-identity
-
       - name: Terraform Init
         run: terraform init
 
@@ -55,50 +52,55 @@ jobs:
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
-      - name: Terraform Outputs
-        if: ${{ github.event.inputs.action == 'apply' }}
-        run: terraform output
-
       # ==========================
       # DESTROY FLOW
       # ==========================
+
       - name: Install kubectl (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           if command -v kubectl >/dev/null 2>&1; then
             echo "kubectl already installed ✅"
             kubectl version --client || true
-          else
-            echo "Installing kubectl..."
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
-            kubectl version --client || true
-          fi
-
-      - name: Update kubeconfig (Destroy only)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        continue-on-error: true
-        run: |
-          CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || true)
-
-          if [ -z "$CLUSTER_NAME" ]; then
-            echo "No cluster name found in terraform outputs (probably already destroyed)."
             exit 0
           fi
 
-          echo "Using cluster: $CLUSTER_NAME"
-          aws eks update-kubeconfig --region eu-west-1 --name "$CLUSTER_NAME" || true
-          kubectl get nodes || true
+          KUBECTL_VERSION="v1.29.0"
+          curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client || true
 
-      - name: Cleanup Kubernetes LoadBalancers (Destroy only)
+      - name: Detect EKS Cluster (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
+        id: detect_cluster
         continue-on-error: true
         run: |
-          echo "Deleting all ingresses..."
+          CLUSTER_NAME=$(aws eks list-clusters --region eu-west-1 --query "clusters[0]" --output text 2>/dev/null || echo "")
+
+          if [ "$CLUSTER_NAME" = "None" ] || [ -z "$CLUSTER_NAME" ]; then
+            echo "No EKS cluster found."
+            echo "has_cluster=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found cluster: $CLUSTER_NAME"
+            echo "has_cluster=true" >> $GITHUB_OUTPUT
+            echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update kubeconfig (Destroy only)
+        if: ${{ github.event.inputs.action == 'destroy' && steps.detect_cluster.outputs.has_cluster == 'true' }}
+        continue-on-error: true
+        run: |
+          aws eks update-kubeconfig --region eu-west-1 --name "${{ steps.detect_cluster.outputs.cluster_name }}" || true
+
+      - name: Cleanup Kubernetes Resources (Destroy only)
+        if: ${{ github.event.inputs.action == 'destroy' && steps.detect_cluster.outputs.has_cluster == 'true' }}
+        continue-on-error: true
+        run: |
+          echo "Deleting ingress resources..."
           kubectl delete ingress --all -A --ignore-not-found=true || true
 
-          echo "Deleting all LoadBalancer services..."
+          echo "Deleting LoadBalancer services..."
           kubectl get svc -A -o jsonpath='{range .items[?(@.spec.type=="LoadBalancer")]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' \
             | while read ns name; do
                 if [ -n "$ns" ] && [ -n "$name" ]; then
@@ -111,14 +113,39 @@ jobs:
           kubectl delete ns ingress-nginx --ignore-not-found=true || true
           kubectl delete ns argocd --ignore-not-found=true || true
           kubectl delete ns datadog --ignore-not-found=true || true
-          kubectl delete ns external-secrets --ignore-not-found=true || true
 
-      - name: Wait for AWS resources cleanup
+      - name: Extra wait for AWS cleanup (Destroy only)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "Waiting 300 seconds for AWS cleanup..."
           sleep 300
 
-      - name: Terraform Destroy
+      # 🔥 Destroy EKS First (Most important)
+      - name: Terraform Destroy EKS
         if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
+        run: terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks
+
+      - name: Extra wait after EKS destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "Waiting 240 seconds after EKS destroy..."
+          sleep 240
+
+      # 🔥 Destroy Networking
+      - name: Terraform Destroy Networking
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
+        run: terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking
+
+      # 🔥 Destroy IAM
+      - name: Terraform Destroy IAM
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
+        run: terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam
+
+      # 🔥 Final cleanup run (will not touch ECR if prevent_destroy exists)
+      - name: Terraform Final Destroy (Ignore ECR)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        continue-on-error: true
         run: terraform destroy -auto-approve -var-file=nonprod.tfvars
