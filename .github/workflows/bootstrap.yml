@@ -25,50 +25,53 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ kubeconfig
+      # 3️⃣ Update kubeconfig
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
             --region $AWS_REGION \
             --name $CLUSTER_NAME
 
-      # 4️⃣ Verify cluster
+      # 4️⃣ Verify cluster access
       - name: Verify cluster access
         run: kubectl get nodes
 
-      # 5️⃣ Install Helm
+      # 5️⃣ Install Helm (if not exists)
       - name: Install Helm
         run: |
-          set -e
-          mkdir -p $HOME/bin
-          curl -fsSL https://get.helm.sh/helm-v3.14.4-linux-amd64.tar.gz -o helm.tar.gz
-          tar -xzf helm.tar.gz
-          mv linux-amd64/helm $HOME/bin/helm
-          chmod +x $HOME/bin/helm
-          echo "$HOME/bin" >> $GITHUB_PATH
+          if command -v helm >/dev/null 2>&1; then
+            echo "Helm already installed ✅"
+            helm version
+          else
+            echo "Installing Helm..."
+            curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            helm version
+          fi
 
-      # 6️⃣ Verify Helm
-      - name: Verify Helm
-        run: |
-          echo "PATH=$PATH"
-          which helm
-          helm version
-
-      # 7️⃣ Namespaces
+      # 6️⃣ Namespaces
       - name: Create namespaces
         run: kubectl apply -f bootstrap/namespaces.yaml
 
-      # 8️⃣ Ingress NGINX
+      # 7️⃣ Ingress NGINX
       - name: Install Ingress NGINX
         run: bash bootstrap/helm/ingress-nginx.sh
 
-      # 9️⃣ ArgoCD
+      # 8️⃣ ArgoCD
       - name: Install ArgoCD
         run: bash bootstrap/helm/argocd.sh
 
-      # 🔟 Datadog
+      # 9️⃣ Datadog
       - name: Install Datadog
         run: bash bootstrap/helm/datadog/install-datadog.sh
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
+
+      # 🔟 External Secrets Operator
+      - name: Install External Secrets Operator
+        run: bash bootstrap/helm/external-secrets/install-external-secrets.sh
+
+      # 11️⃣ Verify ESO
+      - name: Verify External Secrets Operator
+        run: |
+          kubectl get pods -n external-secrets
