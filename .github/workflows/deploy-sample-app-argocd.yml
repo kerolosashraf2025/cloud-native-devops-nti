@@ -26,7 +26,7 @@ jobs:
       - name: Install kubectl (if missing)
         run: |
           if ! command -v kubectl >/dev/null 2>&1; then
-            echo "kubectl not found, installing..."
+            echo "Installing kubectl..."
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
             chmod +x kubectl
             sudo mv kubectl /usr/local/bin/kubectl
@@ -49,12 +49,6 @@ jobs:
             --output text)
 
           echo "LATEST_TAG=$LATEST_TAG"
-
-          if [ "$LATEST_TAG" = "None" ] || [ -z "$LATEST_TAG" ]; then
-            echo "❌ No image tag found in ECR repository!"
-            exit 1
-          fi
-
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
       - name: Update deployment image tag in GitOps manifests
@@ -62,11 +56,9 @@ jobs:
           TAG="${{ steps.ecr.outputs.latest_tag }}"
           FILE="gitops/nonprod/sample-app/deployment.yaml"
 
-          echo "Updating deployment.yaml with tag: $TAG"
-
           sed -i "s|image: .*cloud-native-sample-app:.*|image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:${TAG}|g" $FILE
 
-          echo "Updated deployment.yaml:"
+          echo "Updated deployment.yaml with tag: $TAG"
           cat $FILE
 
       - name: Commit & Push changes
@@ -76,36 +68,38 @@ jobs:
 
           git add gitops/nonprod/sample-app/deployment.yaml
           git commit -m "Update sample-app image tag to latest" || echo "No changes to commit"
+
+          git pull --rebase origin main
           git push origin main
 
       - name: Apply ArgoCD Application
         run: |
           kubectl apply -f gitops/nonprod/argocd/sample-app-application.yaml
 
-      - name: Wait for ArgoCD sync
+      - name: Restart deployment (force refresh)
         run: |
-          echo "Waiting 60 seconds for ArgoCD to sync..."
-          sleep 60
+          kubectl rollout restart deployment/sample-app -n default
 
       - name: Wait for pods to be Ready (with debug)
         run: |
           echo "Waiting for deployment rollout..."
-          kubectl rollout status deployment/sample-app -n default --timeout=300s || true
+          if ! kubectl rollout status deployment/sample-app -n default --timeout=600s; then
+            echo "❌ Rollout failed. Printing debug info..."
 
-          echo "========== Pods =========="
-          kubectl get pods -n default -o wide
+            echo "====== PODS ======"
+            kubectl get pods -n default -o wide
 
-          echo "========== Describe Deployment =========="
-          kubectl describe deployment sample-app -n default
+            echo "====== DESCRIBE DEPLOYMENT ======"
+            kubectl describe deployment sample-app -n default
 
-          echo "========== Describe Pods =========="
-          kubectl describe pods -n default -l app=sample-app
+            echo "====== DESCRIBE PODS ======"
+            kubectl describe pods -n default -l app=sample-app
 
-          echo "========== Logs =========="
-          kubectl logs -n default -l app=sample-app --tail=200 || true
+            echo "====== LOGS ======"
+            kubectl logs -n default -l app=sample-app --tail=200
 
-          echo "❌ Deployment failed to become ready."
-          exit 1
+            exit 1
+          fi
 
       - name: Show Ingress URL
         run: |
