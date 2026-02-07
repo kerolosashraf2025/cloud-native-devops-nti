@@ -66,7 +66,7 @@ jobs:
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           if command -v kubectl >/dev/null 2>&1; then
-            echo "kubectl already installed ✅"
+            echo "kubectl already installed success ✅"
             kubectl version --client || true
           else
             echo "Installing kubectl..."
