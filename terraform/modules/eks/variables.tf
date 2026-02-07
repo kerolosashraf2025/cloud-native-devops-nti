@@ -58,6 +58,11 @@ variable "node_group_role_arn" {
   type = string
 }
 
+variable "attach_ssm" {
+  type    = bool
+  default = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

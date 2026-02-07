@@ -13,11 +13,9 @@ jobs:
       CLUSTER_NAME: nti-nonprod-eks
 
     steps:
-      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ AWS Credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -25,18 +23,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3️⃣ Update kubeconfig
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
             --region $AWS_REGION \
             --name $CLUSTER_NAME
 
-      # 4️⃣ Verify cluster access
       - name: Verify cluster access
         run: kubectl get nodes
 
-      # 5️⃣ Install Helm (if not exists)
       - name: Install Helm
         run: |
           if command -v helm >/dev/null 2>&1; then
@@ -48,30 +43,39 @@ jobs:
             helm version
           fi
 
-      # 6️⃣ Namespaces
       - name: Create namespaces
         run: kubectl apply -f bootstrap/namespaces.yaml
 
-      # 7️⃣ Ingress NGINX
       - name: Install Ingress NGINX
         run: bash bootstrap/helm/ingress-nginx.sh
 
-      # 8️⃣ ArgoCD
       - name: Install ArgoCD
         run: bash bootstrap/helm/argocd.sh
 
-      # 9️⃣ Datadog
       - name: Install Datadog
         run: bash bootstrap/helm/datadog/install-datadog.sh
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
 
-      # 🔟 External Secrets Operator
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Terraform Init (Read Outputs)
+        working-directory: terraform
+        run: terraform init
+
+      - name: Export External Secrets Role ARN
+        working-directory: terraform
+        run: |
+          ROLE_ARN=$(terraform output -raw external_secrets_irsa_role_arn)
+          echo "EXTERNAL_SECRETS_ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
+          echo "External Secrets Role ARN: $ROLE_ARN"
+
       - name: Install External Secrets Operator
         run: bash bootstrap/helm/external-secrets/install-external-secrets.sh
 
-      # 11️⃣ Verify ESO
       - name: Verify External Secrets Operator
-        run: |
-          kubectl get pods -n external-secrets
+        run: kubectl get pods -n external-secrets
