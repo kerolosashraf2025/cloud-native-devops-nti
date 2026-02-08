@@ -1,7 +1,6 @@
-name: CI - Build & Push Docker Image to ECR
+name: CI - Build & Push Docker Image
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
@@ -9,12 +8,13 @@ on:
       - "app/**"
       - ".github/workflows/ci.yml"
 
+env:
+  AWS_REGION: eu-west-1
+  ECR_REPOSITORY: cloud-native-sample-app
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout code
@@ -25,107 +25,103 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: cloud-native-sample-app
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Set Image Tag
+        id: vars
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      # ==========================
-      # ECR SCAN VALIDATION
-      # ==========================
-      - name: Wait for ECR Image Scan to Complete
-        env:
-          REPO_NAME: cloud-native-sample-app
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Build, tag, and push image to ECR
         run: |
-          echo "Waiting for ECR scan to complete for image tag: $IMAGE_TAG"
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI=$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
+
+          docker build -t $IMAGE_URI ./app
+          docker push $IMAGE_URI
+
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      # ==============================
+      # Wait for ECR scan to complete
+      # ==============================
+      - name: Wait for ECR Image Scan to Complete
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          echo "Waiting for ECR scan to complete for image tag: ${IMAGE_TAG}"
 
           for i in {1..30}; do
             STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name $REPO_NAME \
-              --image-id imageTag=$IMAGE_TAG \
+              --repository-name ${ECR_REPOSITORY} \
+              --image-id imageTag=${IMAGE_TAG} \
               --query 'imageScanStatus.status' \
-              --output text)
+              --output text 2>/dev/null || echo "NOT_FOUND")
 
-            echo "Scan status: $STATUS"
+            echo "Attempt $i - Scan Status: $STATUS"
 
-            if [ "$STATUS" == "COMPLETE" ]; then
-              echo "ECR Scan completed ✅"
-              break
+            if [ "$STATUS" = "COMPLETE" ]; then
+              echo "Scan completed."
+              exit 0
             fi
 
-            if [ "$STATUS" == "FAILED" ]; then
-              echo "❌ ECR Scan failed"
-              exit 1
-            fi
-
-            echo "Scan still running... waiting 10 seconds"
             sleep 10
           done
 
+          echo "ECR Scan did not complete in time."
+          exit 1
+
+      # ==============================
+      # Fail pipeline if HIGH/CRITICAL
+      # ==============================
       - name: Check ECR Scan Findings (Fail on HIGH/CRITICAL)
-        env:
-          REPO_NAME: cloud-native-sample-app
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "Checking vulnerabilities..."
-
-          CRITICAL=$(aws ecr describe-image-scan-findings \
-            --repository-name $REPO_NAME \
-            --image-id imageTag=$IMAGE_TAG \
-            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
-            --output text)
-
           HIGH=$(aws ecr describe-image-scan-findings \
-            --repository-name $REPO_NAME \
-            --image-id imageTag=$IMAGE_TAG \
+            --repository-name ${ECR_REPOSITORY} \
+            --image-id imageTag=${IMAGE_TAG} \
             --query 'imageScanFindings.findingSeverityCounts.HIGH' \
             --output text)
 
-          if [ "$CRITICAL" == "None" ]; then CRITICAL=0; fi
-          if [ "$HIGH" == "None" ]; then HIGH=0; fi
+          CRITICAL=$(aws ecr describe-image-scan-findings \
+            --repository-name ${ECR_REPOSITORY} \
+            --image-id imageTag=${IMAGE_TAG} \
+            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
+            --output text)
 
-          echo "CRITICAL findings: $CRITICAL"
-          echo "HIGH findings: $HIGH"
+          HIGH=${HIGH:-0}
+          CRITICAL=${CRITICAL:-0}
 
-          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
-            echo "❌ Vulnerabilities found! Build failed."
+          echo "HIGH vulnerabilities: $HIGH"
+          echo "CRITICAL vulnerabilities: $CRITICAL"
+
+          if [ "$HIGH" != "0" ] || [ "$CRITICAL" != "0" ]; then
+            echo "❌ Image scan failed due to HIGH/CRITICAL vulnerabilities."
             exit 1
           fi
 
-          echo "✅ No HIGH/CRITICAL vulnerabilities found."
+          echo "✅ Image scan passed."
 
-      # ==========================
-      # UPDATE GITOPS IMAGE TAG
-      # ==========================
+      # ==============================
+      # Update GitOps deployment image tag
+      # ==============================
       - name: Update GitOps Deployment Image Tag
         run: |
-          echo "Updating deployment.yaml with new image tag..."
-          sed -i "s|image: .*cloud-native-sample-app:.*|image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:${{ github.sha }}|g" gitops/nonprod/sample-app/deployment.yaml
-
-          echo "Updated file content:"
-          cat gitops/nonprod/sample-app/deployment.yaml
+          sed -i "s|image:.*|image: ${IMAGE_URI}|g" gitops/sample-app/deployment.yaml
 
       - name: Commit & Push GitOps changes
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add gitops/nonprod/sample-app/deployment.yaml
-          git commit -m "Update sample-app image tag to ${{ github.sha }}" || echo "No changes to commit"
+          git add gitops/sample-app/deployment.yaml
+          git commit -m "Update sample-app image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+
+          git pull --rebase origin main
           git push origin main
 
       - name: Print Image URI
         run: |
-          echo "Image pushed successfully 🎉"
-          echo "842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:${{ github.sha }}"
+          echo "Pushed image: ${IMAGE_URI}"
