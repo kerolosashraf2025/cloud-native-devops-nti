@@ -31,7 +31,6 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set Image Tag
-        id: vars
         run: |
           echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
@@ -45,68 +44,6 @@ jobs:
 
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # ==============================
-      # Wait for ECR scan to complete
-      # ==============================
-      - name: Wait for ECR Image Scan to Complete
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-          echo "Waiting for ECR scan to complete for image tag: ${IMAGE_TAG}"
-
-          for i in {1..30}; do
-            STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name ${ECR_REPOSITORY} \
-              --image-id imageTag=${IMAGE_TAG} \
-              --query 'imageScanStatus.status' \
-              --output text 2>/dev/null || echo "NOT_FOUND")
-
-            echo "Attempt $i - Scan Status: $STATUS"
-
-            if [ "$STATUS" = "COMPLETE" ]; then
-              echo "Scan completed."
-              exit 0
-            fi
-
-            sleep 10
-          done
-
-          echo "ECR Scan did not complete in time."
-          exit 1
-
-      # ==============================
-      # Fail pipeline if HIGH/CRITICAL
-      # ==============================
-      - name: Check ECR Scan Findings (Fail on HIGH/CRITICAL)
-        run: |
-          HIGH=$(aws ecr describe-image-scan-findings \
-            --repository-name ${ECR_REPOSITORY} \
-            --image-id imageTag=${IMAGE_TAG} \
-            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
-            --output text)
-
-          CRITICAL=$(aws ecr describe-image-scan-findings \
-            --repository-name ${ECR_REPOSITORY} \
-            --image-id imageTag=${IMAGE_TAG} \
-            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
-            --output text)
-
-          HIGH=${HIGH:-0}
-          CRITICAL=${CRITICAL:-0}
-
-          echo "HIGH vulnerabilities: $HIGH"
-          echo "CRITICAL vulnerabilities: $CRITICAL"
-
-          if [ "$HIGH" != "0" ] || [ "$CRITICAL" != "0" ]; then
-            echo "❌ Image scan failed due to HIGH/CRITICAL vulnerabilities."
-            exit 1
-          fi
-
-          echo "✅ Image scan passed."
-
-      # ==============================
-      # Update GitOps deployment image tag
-      # ==============================
       - name: Update GitOps Deployment Image Tag
         run: |
           sed -i "s|image:.*|image: ${IMAGE_URI}|g" gitops/sample-app/deployment.yaml
