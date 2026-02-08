@@ -46,19 +46,18 @@ jobs:
       - name: Find deployment.yaml path
         run: |
           echo "Searching for deployment.yaml ..."
-          find gitops -type f -name "deployment.yaml" || true
+          find gitops -type f -name "deployment.yaml"
 
       - name: Update GitOps Deployment Image Tag
         run: |
           DEPLOYMENT_FILE=$(find gitops -type f -name "deployment.yaml" | head -n 1)
 
           if [ -z "$DEPLOYMENT_FILE" ]; then
-            echo "❌ deployment.yaml not found inside gitops/"
+            echo "deployment.yaml not found inside gitops/"
             exit 1
           fi
 
-          echo "✅ Found deployment file: $DEPLOYMENT_FILE"
-
+          echo "Found deployment file: $DEPLOYMENT_FILE"
           sed -i "s|image:.*|image: ${IMAGE_URI}|g" $DEPLOYMENT_FILE
 
       - name: Commit & Push GitOps changes
@@ -73,4 +72,5 @@ jobs:
           git push origin main
 
       - name: Print Image URI
-        run: echo "Pushed image: ${IMAGE_URI}"
+        run: |
+          echo "Pushed image: ${IMAGE_URI}"
