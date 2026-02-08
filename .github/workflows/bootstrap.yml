@@ -24,7 +24,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       # ==========================
-      # Install kubectl if missing
+      # Install kubectl (if missing)
       # ==========================
       - name: Install kubectl (if missing)
         run: |
@@ -35,12 +35,12 @@ jobs:
             echo "Installing kubectl..."
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
             chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
+            sudo mv kubectl /usr/local/bin/
             kubectl version --client
           fi
 
       # ==========================
-      # Install Helm (Kali safe way)
+      # Install Helm (FIXED)
       # ==========================
       - name: Install Helm (if missing)
         run: |
@@ -49,16 +49,7 @@ jobs:
             helm version
           else
             echo "Installing Helm..."
-            
-            mkdir -p $HOME/.local/bin
-
-            curl -fsSL -o helm.tar.gz https://get.helm.sh/helm-v3.17.0-linux-amd64.tar.gz
-            tar -xzf helm.tar.gz
-            mv linux-amd64/helm $HOME/.local/bin/helm
-            chmod +x $HOME/.local/bin/helm
-
-            echo "$HOME/.local/bin" >> $GITHUB_PATH
-
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash
             helm version
           fi
 
@@ -75,26 +66,17 @@ jobs:
         run: kubectl get nodes
 
       # ==========================
-      # Create namespaces
+      # Bootstrap Tools
       # ==========================
       - name: Create namespaces
         run: kubectl apply -f bootstrap/namespaces.yaml
 
-      # ==========================
-      # Install Ingress Controller
-      # ==========================
       - name: Install Ingress NGINX
         run: bash bootstrap/helm/ingress-nginx.sh
 
-      # ==========================
-      # Install ArgoCD
-      # ==========================
       - name: Install ArgoCD
         run: bash bootstrap/helm/argocd.sh
 
-      # ==========================
-      # Install Datadog
-      # ==========================
       - name: Install Datadog
         run: bash bootstrap/helm/datadog/install-datadog.sh
         env:
@@ -102,7 +84,7 @@ jobs:
           CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
 
       # ==========================
-      # Setup Terraform
+      # Terraform Setup
       # ==========================
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -113,9 +95,6 @@ jobs:
         working-directory: terraform
         run: terraform init
 
-      # ==========================
-      # Export External Secrets Role ARN
-      # ==========================
       - name: Export External Secrets Role ARN
         working-directory: terraform
         run: |
@@ -123,13 +102,8 @@ jobs:
           echo "EXTERNAL_SECRETS_ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
           echo "External Secrets Role ARN: $ROLE_ARN"
 
-      # ==========================
-      # Install External Secrets Operator
-      # ==========================
       - name: Install External Secrets Operator
         run: bash bootstrap/helm/external-secrets/install-external-secrets.sh
-        env:
-          EXTERNAL_SECRETS_ROLE_ARN: ${{ env.EXTERNAL_SECRETS_ROLE_ARN }}
 
       - name: Verify External Secrets Operator
         run: kubectl get pods -n external-secrets
