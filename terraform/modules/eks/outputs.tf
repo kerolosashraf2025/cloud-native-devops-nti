@@ -17,3 +17,7 @@ output "oidc_provider_arn" {
 output "external_secrets_irsa_role_arn" {
   value = try(aws_iam_role.external_secrets_irsa_role[0].arn, null)
 }
+
+output "node_group_instance_ids" {
+  value = data.aws_instances.eks_node_instances.ids
+}

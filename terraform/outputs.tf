@@ -29,3 +29,11 @@ output "oidc_provider_arn" {
 output "external_secrets_irsa_role_arn" {
   value = module.eks.external_secrets_irsa_role_arn
 }
+
+output "apigw_url" {
+  value = aws_apigatewayv2_api.http_api.api_endpoint
+}
+
+output "apigw_nlb_dns_name" {
+  value = aws_lb.apigw_nlb.dns_name
+}

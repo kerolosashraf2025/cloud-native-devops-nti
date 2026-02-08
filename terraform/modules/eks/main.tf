@@ -94,3 +94,17 @@ resource "aws_eks_node_group" "this" {
   instance_types = var.instance_types
   capacity_type  = var.capacity_type
 }
+
+# ============================================================
+# Fetch EKS Node Group EC2 instances (needed for NLB attachments)
+# ============================================================
+
+data "aws_autoscaling_group" "eks_nodes_asg" {
+  name = aws_eks_node_group.this.resources[0].autoscaling_groups[0].name
+}
+
+data "aws_instances" "eks_node_instances" {
+  instance_tags = {
+    "aws:autoscaling:groupName" = data.aws_autoscaling_group.eks_nodes_asg.name
+  }
+}
