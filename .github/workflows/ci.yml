@@ -43,5 +43,34 @@ jobs:
 
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
+      - name: Find deployment.yaml path
+        run: |
+          echo "Searching for deployment.yaml ..."
+          find gitops -type f -name "deployment.yaml" || true
+
+      - name: Update GitOps Deployment Image Tag
+        run: |
+          DEPLOYMENT_FILE=$(find gitops -type f -name "deployment.yaml" | head -n 1)
+
+          if [ -z "$DEPLOYMENT_FILE" ]; then
+            echo "❌ deployment.yaml not found inside gitops/"
+            exit 1
+          fi
+
+          echo "✅ Found deployment file: $DEPLOYMENT_FILE"
+
+          sed -i "s|image:.*|image: ${IMAGE_URI}|g" $DEPLOYMENT_FILE
+
+      - name: Commit & Push GitOps changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add gitops/
+          git commit -m "Update sample-app image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+
+          git pull --rebase origin main
+          git push origin main
+
       - name: Print Image URI
         run: echo "Pushed image: ${IMAGE_URI}"
