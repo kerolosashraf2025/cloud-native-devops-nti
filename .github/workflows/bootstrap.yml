@@ -17,25 +17,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup kubectl
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'latest'
-
-      # 3️⃣ Setup Helm (NO sudo needed)
-      - name: Setup Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.14.4
-
-      # 4️⃣ AWS Credentials
+      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
+
+      # 3️⃣ Install kubectl (local, no sudo)
+      - name: Install kubectl (if missing)
+        run: |
+          if command -v kubectl >/dev/null 2>&1; then
+            echo "kubectl already installed ✅"
+            kubectl version --client
+          else
+            echo "Installing kubectl..."
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            mkdir -p $HOME/.local/bin
+            mv kubectl $HOME/.local/bin/kubectl
+            echo "$HOME/.local/bin" >> $GITHUB_PATH
+            kubectl version --client
+          fi
+
+      # 4️⃣ Install Helm (local, no sudo)
+      - name: Install Helm (if missing)
+        run: |
+          if command -v helm >/dev/null 2>&1; then
+            echo "Helm already installed ✅"
+            helm version
+          else
+            echo "Installing Helm..."
+            curl -fsSL https://get.helm.sh/helm-v3.14.4-linux-amd64.tar.gz -o helm.tar.gz
+            tar -xzf helm.tar.gz
+            chmod +x linux-amd64/helm
+            mkdir -p $HOME/.local/bin
+            mv linux-amd64/helm $HOME/.local/bin/helm
+            echo "$HOME/.local/bin" >> $GITHUB_PATH
+            helm version
+          fi
 
       # 5️⃣ Update kubeconfig
       - name: Update kubeconfig
@@ -48,34 +69,48 @@ jobs:
       - name: Verify cluster access
         run: kubectl get nodes
 
-      # 7️⃣ Verify Helm
-      - name: Verify Helm
-        run: helm version
-
-      # 8️⃣ Namespaces
+      # 7️⃣ Namespaces
       - name: Create namespaces
         run: kubectl apply -f bootstrap/namespaces.yaml
 
-      # 9️⃣ Ingress NGINX
+      # 8️⃣ Ingress NGINX
       - name: Install Ingress NGINX
         run: bash bootstrap/helm/ingress-nginx.sh
 
-      # 🔟 ArgoCD
+      # 9️⃣ ArgoCD
       - name: Install ArgoCD
         run: bash bootstrap/helm/argocd.sh
 
-      # 11️⃣ Datadog
+      # 🔟 Datadog
       - name: Install Datadog
         run: bash bootstrap/helm/datadog/install-datadog.sh
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
 
-      # 12️⃣ External Secrets Operator
+      # 11️⃣ Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      # 12️⃣ Terraform Init (Read Outputs)
+      - name: Terraform Init (Read Outputs)
+        working-directory: terraform
+        run: terraform init
+
+      # 13️⃣ Export External Secrets Role ARN
+      - name: Export External Secrets Role ARN
+        working-directory: terraform
+        run: |
+          ROLE_ARN=$(terraform output -raw external_secrets_irsa_role_arn)
+          echo "EXTERNAL_SECRETS_ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
+          echo "External Secrets Role ARN: $ROLE_ARN"
+
+      # 14️⃣ External Secrets Operator
       - name: Install External Secrets Operator
         run: bash bootstrap/helm/external-secrets/install-external-secrets.sh
 
-      # 13️⃣ Verify External Secrets Operator
+      # 15️⃣ Verify External Secrets Operator
       - name: Verify External Secrets Operator
-        run: |
-          kubectl get pods -n external-secrets
+        run: kubectl get pods -n external-secrets
