@@ -23,16 +23,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
 
-      - name: Install kubectl (if missing)
-        run: |
-          if ! command -v kubectl >/dev/null 2>&1; then
-            echo "Installing kubectl..."
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
-          fi
-          kubectl version --client
-
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig --region eu-west-1 --name nti-nonprod-eks
@@ -61,13 +51,13 @@ jobs:
           echo "Updated deployment.yaml with tag: $TAG"
           cat $FILE
 
-      - name: Commit & Push changes
+      - name: Commit & Push GitOps changes
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
           git add gitops/nonprod/sample-app/deployment.yaml
-          git commit -m "Update sample-app image tag to latest" || echo "No changes to commit"
+          git commit -m "Update sample-app image tag to ${{ steps.ecr.outputs.latest_tag }}" || echo "No changes to commit"
 
           git pull --rebase origin main
           git push origin main
@@ -76,9 +66,22 @@ jobs:
         run: |
           kubectl apply -f gitops/nonprod/argocd/sample-app-application.yaml
 
-      - name: Restart deployment (force refresh)
+      - name: Wait for Deployment to be created
         run: |
-          kubectl rollout restart deployment/sample-app -n default
+          echo "Waiting for deployment sample-app to be created..."
+          for i in {1..30}; do
+            if kubectl get deployment sample-app -n default >/dev/null 2>&1; then
+              echo "Deployment sample-app found ✅"
+              kubectl get deployment sample-app -n default
+              exit 0
+            fi
+            echo "Still waiting... ($i/30)"
+            sleep 10
+          done
+
+          echo "❌ Deployment was not created after waiting."
+          kubectl get all -n default
+          exit 1
 
       - name: Wait for pods to be Ready (with debug)
         run: |
@@ -103,7 +106,9 @@ jobs:
 
       - name: Show Ingress URL
         run: |
+          echo "====== INGRESS ======"
           kubectl get ingress -n default
+
           echo "Ingress URL:"
           kubectl get ingress sample-app-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
           echo ""
