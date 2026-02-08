@@ -22,6 +22,10 @@ jobs:
         shell: bash
         working-directory: terraform
 
+    env:
+      AWS_REGION: eu-west-1
+      CLUSTER_NAME: nti-nonprod-eks
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,7 +40,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: eu-west-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Terraform Init
         run: terraform init
@@ -53,13 +57,65 @@ jobs:
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
       # ==========================
-      # DESTROY FLOW (SAFE - KEEP ECR)
+      # DESTROY FLOW (AUTO CLEANUP)
       # ==========================
+      - name: Install kubectl (if missing)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          if ! command -v kubectl >/dev/null 2>&1; then
+            echo "Installing kubectl..."
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/kubectl
+          fi
+          kubectl version --client
+
+      - name: Cleanup Kubernetes LoadBalancers & Ingress (before destroy)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "=========================================="
+          echo "Updating kubeconfig..."
+          echo "=========================================="
+          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+
+          echo "=========================================="
+          echo "Listing LoadBalancer services before cleanup..."
+          echo "=========================================="
+          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found."
+
+          echo "=========================================="
+          echo "Deleting ALL Ingress resources (all namespaces)..."
+          echo "=========================================="
+          kubectl get ingress -A --no-headers 2>/dev/null | awk '{print $1" "$2}' | while read ns name; do
+            echo "Deleting ingress: $name in namespace: $ns"
+            kubectl delete ingress "$name" -n "$ns" --ignore-not-found=true
+          done
+
+          echo "=========================================="
+          echo "Patching ALL LoadBalancer services to ClusterIP..."
+          echo "=========================================="
+          kubectl get svc -A --no-headers | awk '{print $1" "$2" "$4}' | while read ns name type; do
+            if [ "$type" = "LoadBalancer" ]; then
+              echo "Patching service $name in namespace $ns to ClusterIP..."
+              kubectl patch svc "$name" -n "$ns" -p '{"spec":{"type":"ClusterIP"}}' || true
+            fi
+          done
+
+          echo "=========================================="
+          echo "Waiting 180 seconds for AWS ELB/NLB cleanup..."
+          echo "=========================================="
+          sleep 180
+
+          echo "=========================================="
+          echo "Listing LoadBalancer services after cleanup..."
+          echo "=========================================="
+          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services remaining."
+
       - name: Terraform Destroy (Safe - Keep ECR)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
-          echo "Step 1: Destroy EKS first (to delete ELBs)"
+          echo "Step 1: Destroy EKS first (to delete AWS ELBs/NLBs)"
           echo "=========================================="
           terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks
 
@@ -74,5 +130,6 @@ jobs:
           terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking
 
           echo "=========================================="
-          echo "Done. ECR is kept because prevent_destroy=true"
+          echo "Destroy Completed."
+          echo "ECR is kept because prevent_destroy=true"
           echo "=========================================="
