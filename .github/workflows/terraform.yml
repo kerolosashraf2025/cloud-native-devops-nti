@@ -53,12 +53,26 @@ jobs:
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
       # ==========================
-      # DESTROY FLOW (EXCLUDE ECR)
+      # DESTROY FLOW (SAFE - KEEP ECR)
       # ==========================
-      - name: Terraform Destroy (Exclude ECR)
+      - name: Terraform Destroy (Safe - Keep ECR)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          terraform destroy -auto-approve -var-file=nonprod.tfvars \
-            -target=module.eks \
-            -target=module.networking \
-            -target=module.iam
+          echo "=========================================="
+          echo "Step 1: Destroy EKS first (to delete ELBs)"
+          echo "=========================================="
+          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks
+
+          echo "=========================================="
+          echo "Step 2: Destroy IAM"
+          echo "=========================================="
+          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam
+
+          echo "=========================================="
+          echo "Step 3: Destroy Networking (VPC/Subnets/NAT/IGW)"
+          echo "=========================================="
+          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking
+
+          echo "=========================================="
+          echo "Done. ECR is kept because prevent_destroy=true"
+          echo "=========================================="
