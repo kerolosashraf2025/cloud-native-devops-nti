@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: sample-app
-          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:c4bc4fb49017a26241390a36ec9620db720ef684
+          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:e52e9901403250c5b8744969827562152c9ecf1d
           ports:
             - containerPort: 3000
 
