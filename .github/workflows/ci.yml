@@ -40,6 +40,74 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
+      # ==========================
+      # ECR SCAN VALIDATION
+      # ==========================
+      - name: Wait for ECR Image Scan to Complete
+        env:
+          REPO_NAME: cloud-native-sample-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Waiting for ECR scan to complete for image tag: $IMAGE_TAG"
+
+          for i in {1..30}; do
+            STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name $REPO_NAME \
+              --image-id imageTag=$IMAGE_TAG \
+              --query 'imageScanStatus.status' \
+              --output text)
+
+            echo "Scan status: $STATUS"
+
+            if [ "$STATUS" == "COMPLETE" ]; then
+              echo "ECR Scan completed ✅"
+              break
+            fi
+
+            if [ "$STATUS" == "FAILED" ]; then
+              echo "❌ ECR Scan failed"
+              exit 1
+            fi
+
+            echo "Scan still running... waiting 10 seconds"
+            sleep 10
+          done
+
+      - name: Check ECR Scan Findings (Fail on HIGH/CRITICAL)
+        env:
+          REPO_NAME: cloud-native-sample-app
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          echo "Checking vulnerabilities..."
+
+          CRITICAL=$(aws ecr describe-image-scan-findings \
+            --repository-name $REPO_NAME \
+            --image-id imageTag=$IMAGE_TAG \
+            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
+            --output text)
+
+          HIGH=$(aws ecr describe-image-scan-findings \
+            --repository-name $REPO_NAME \
+            --image-id imageTag=$IMAGE_TAG \
+            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
+            --output text)
+
+          if [ "$CRITICAL" == "None" ]; then CRITICAL=0; fi
+          if [ "$HIGH" == "None" ]; then HIGH=0; fi
+
+          echo "CRITICAL findings: $CRITICAL"
+          echo "HIGH findings: $HIGH"
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            echo "❌ Vulnerabilities found! Build failed."
+            exit 1
+          fi
+
+          echo "✅ No HIGH/CRITICAL vulnerabilities found."
+
+      # ==========================
+      # UPDATE GITOPS IMAGE TAG
+      # ==========================
       - name: Update GitOps Deployment Image Tag
         run: |
           echo "Updating deployment.yaml with new image tag..."
