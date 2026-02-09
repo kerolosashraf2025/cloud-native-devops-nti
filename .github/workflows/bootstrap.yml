@@ -137,7 +137,43 @@ jobs:
         run: kubectl get pods -n external-secrets
 
       # ==========================
-      # Show Status
+      # OUTPUTS: ArgoCD UI + Sample App URL
       # ==========================
+      - name: Show ArgoCD UI Access Info
+        run: |
+          echo "========================================="
+          echo "ARGOCD UI ACCESS"
+          echo "========================================="
+
+          ARGOCD_LB=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          if [ -z "$ARGOCD_LB" ]; then
+            echo "❌ ArgoCD service does not have a LoadBalancer hostname."
+            echo "Check service type:"
+            kubectl get svc -n argocd
+          else
+            echo "ArgoCD URL: http://$ARGOCD_LB"
+            echo "ArgoCD Username: admin"
+            echo "ArgoCD Password:"
+            kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d
+            echo ""
+          fi
+
+      - name: Show Sample App Ingress URL
+        run: |
+          echo "========================================="
+          echo "SAMPLE APP ACCESS"
+          echo "========================================="
+
+          APP_LB=$(kubectl get ingress sample-app-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          if [ -z "$APP_LB" ]; then
+            echo "❌ Sample App ingress does not have a LoadBalancer hostname yet."
+            echo "Check ingress:"
+            kubectl get ingress -n default
+          else
+            echo "Sample App URL: http://$APP_LB"
+          fi
+
       - name: Show ArgoCD Applications
         run: kubectl get applications -n argocd || true
