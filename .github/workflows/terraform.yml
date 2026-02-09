@@ -80,12 +80,7 @@ jobs:
           aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME || true
 
           echo "=========================================="
-          echo "Listing LoadBalancer services before cleanup..."
-          echo "=========================================="
-          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found."
-
-          echo "=========================================="
-          echo "Deleting ALL Ingress resources (all namespaces)..."
+          echo "Deleting ALL Ingress resources..."
           echo "=========================================="
           kubectl get ingress -A --no-headers 2>/dev/null | awk '{print $1" "$2}' | while read ns name; do
             echo "Deleting ingress: $name in namespace: $ns"
@@ -107,43 +102,21 @@ jobs:
           echo "=========================================="
           sleep 180
 
-          echo "=========================================="
-          echo "Listing LoadBalancer services after cleanup..."
-          echo "=========================================="
-          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services remaining."
-
       # ==========================
-      # REMOVE ECR FROM STATE
-      # ==========================
-      - name: Remove ECR from Terraform State (prevent_destroy fix)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        run: |
-          echo "=========================================="
-          echo "Checking if ECR exists in terraform state..."
-          echo "=========================================="
-
-          terraform state list | grep aws_ecr_repository || echo "No ECR repo found in state."
-
-          if terraform state list | grep -q "aws_ecr_repository.sample_app"; then
-            echo "Removing aws_ecr_repository.sample_app from state..."
-            terraform state rm aws_ecr_repository.sample_app
-          else
-            echo "ECR repo not found in state, skipping..."
-          fi
-
-      # ==========================
-      # DESTROY FULL INFRA (SAFE)
+      # DESTROY FULL INFRA (EXCEPT ECR)
       # ==========================
       - name: Terraform Destroy (Safe - Keep ECR)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
-          echo "Destroying full infrastructure (ECR excluded)..."
+          echo "Destroying full infrastructure except ECR..."
           echo "=========================================="
 
-          terraform destroy -auto-approve -var-file=nonprod.tfvars || true
+          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks || true
+          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam || true
+          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking || true
 
           echo "=========================================="
           echo "Destroy Completed."
-          echo "ECR is kept because removed from state."
+          echo "ECR is kept because prevent_destroy=true"
           echo "=========================================="
