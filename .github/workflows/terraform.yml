@@ -97,13 +97,14 @@ jobs:
           fi
           kubectl version --client
 
-      - name: Cleanup Kubernetes LoadBalancers & Ingress (before destroy)
+      - name: Cleanup Kubernetes Ingress + LoadBalancer Services (before destroy)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          set +e
+
           echo "=========================================="
           echo "Updating kubeconfig..."
           echo "=========================================="
-
           aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME || true
 
           echo "=========================================="
@@ -115,19 +116,86 @@ jobs:
           done || true
 
           echo "=========================================="
-          echo "Patching ALL LoadBalancer services to ClusterIP..."
+          echo "Deleting ALL LoadBalancer services..."
           echo "=========================================="
-          kubectl get svc -A --no-headers | awk '{print $1" "$2" "$4}' | while read ns name type; do
+          kubectl get svc -A --no-headers 2>/dev/null | awk '{print $1" "$2" "$4}' | while read ns name type; do
             if [ "$type" = "LoadBalancer" ]; then
-              echo "Patching service $name in namespace $ns to ClusterIP..."
-              kubectl patch svc "$name" -n "$ns" -p '{"spec":{"type":"ClusterIP"}}' || true
+              echo "Deleting LoadBalancer service: $name in namespace: $ns"
+              kubectl delete svc "$name" -n "$ns" --ignore-not-found=true
             fi
           done || true
 
           echo "=========================================="
-          echo "Waiting 180 seconds for AWS ELB/NLB cleanup..."
+          echo "Waiting 60 seconds for Kubernetes cleanup..."
           echo "=========================================="
-          sleep 180
+          sleep 60
+
+      - name: Export VPC ID from Terraform Output
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "=========================================="
+          echo "Reading VPC ID from Terraform output..."
+          echo "=========================================="
+
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null)
+
+          if [ -z "$VPC_ID" ]; then
+            echo "❌ Could not detect VPC_ID from terraform output"
+            echo "Terraform state might be broken or already destroyed."
+            exit 1
+          fi
+
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+          echo "Detected VPC ID: $VPC_ID"
+
+      - name: Wait for AWS LoadBalancers cleanup (Only this VPC)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "=========================================="
+          echo "Waiting for AWS LoadBalancers to be deleted in VPC: $VPC_ID"
+          echo "=========================================="
+
+          echo "Checking Classic LoadBalancers (ELB)..."
+          for i in {1..40}; do
+            COUNT=$(aws elb describe-load-balancers --region $AWS_REGION \
+              --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'] | length(@)" \
+              --output text 2>/dev/null)
+
+            if [ "$COUNT" = "0" ]; then
+              echo "✅ No Classic LoadBalancers found in this VPC"
+              break
+            fi
+
+            echo "⏳ Still $COUNT Classic LoadBalancers exist in this VPC... (attempt $i/40)"
+            aws elb describe-load-balancers --region $AWS_REGION \
+              --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'].[LoadBalancerName,DNSName]" \
+              --output table || true
+
+            sleep 30
+          done
+
+          echo "Checking ALB/NLB (ELBv2)..."
+          for i in {1..40}; do
+            COUNT=$(aws elbv2 describe-load-balancers --region $AWS_REGION \
+              --query "LoadBalancers[?VpcId=='$VPC_ID'] | length(@)" \
+              --output text 2>/dev/null)
+
+            if [ "$COUNT" = "0" ]; then
+              echo "✅ No ALB/NLB found in this VPC"
+              break
+            fi
+
+            echo "⏳ Still $COUNT ALB/NLB exist in this VPC... (attempt $i/40)"
+            aws elbv2 describe-load-balancers --region $AWS_REGION \
+              --query "LoadBalancers[?VpcId=='$VPC_ID'].[LoadBalancerName,DNSName,Type]" \
+              --output table || true
+
+            sleep 30
+          done
+
+          echo "=========================================="
+          echo "AWS LoadBalancer cleanup check finished."
+          echo "=========================================="
 
       - name: Terraform Destroy (Safe - Keep ECR)
         if: ${{ github.event.inputs.action == 'destroy' }}
