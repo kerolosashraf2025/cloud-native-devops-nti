@@ -57,7 +57,7 @@ jobs:
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
       # ==========================
-      # DESTROY FLOW
+      # DESTROY FLOW (AUTO CLEANUP)
       # ==========================
       - name: Install kubectl (if missing)
         if: ${{ github.event.inputs.action == 'destroy' }}
@@ -74,75 +74,76 @@ jobs:
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
-          echo "Checking if EKS cluster exists..."
+          echo "Updating kubeconfig..."
           echo "=========================================="
 
-          if aws eks describe-cluster --region $AWS_REGION --name $CLUSTER_NAME >/dev/null 2>&1; then
-            echo "Cluster exists. Updating kubeconfig..."
-            aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME || true
 
-            echo "=========================================="
-            echo "Listing LoadBalancer services before cleanup..."
-            echo "=========================================="
-            kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found."
+          echo "=========================================="
+          echo "Listing LoadBalancer services before cleanup..."
+          echo "=========================================="
+          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found."
 
-            echo "=========================================="
-            echo "Deleting ALL Ingress resources (all namespaces)..."
-            echo "=========================================="
-            kubectl get ingress -A --no-headers 2>/dev/null | awk '{print $1" "$2}' | while read ns name; do
-              echo "Deleting ingress: $name in namespace: $ns"
-              kubectl delete ingress "$name" -n "$ns" --ignore-not-found=true || true
-            done
+          echo "=========================================="
+          echo "Deleting ALL Ingress resources (all namespaces)..."
+          echo "=========================================="
+          kubectl get ingress -A --no-headers 2>/dev/null | awk '{print $1" "$2}' | while read ns name; do
+            echo "Deleting ingress: $name in namespace: $ns"
+            kubectl delete ingress "$name" -n "$ns" --ignore-not-found=true
+          done || true
 
-            echo "=========================================="
-            echo "Patching ALL LoadBalancer services to ClusterIP..."
-            echo "=========================================="
-            kubectl get svc -A --no-headers 2>/dev/null | awk '{print $1" "$2" "$4}' | while read ns name type; do
-              if [ "$type" = "LoadBalancer" ]; then
-                echo "Patching service $name in namespace $ns to ClusterIP..."
-                kubectl patch svc "$name" -n "$ns" -p '{"spec":{"type":"ClusterIP"}}' || true
-              fi
-            done
+          echo "=========================================="
+          echo "Patching ALL LoadBalancer services to ClusterIP..."
+          echo "=========================================="
+          kubectl get svc -A --no-headers | awk '{print $1" "$2" "$4}' | while read ns name type; do
+            if [ "$type" = "LoadBalancer" ]; then
+              echo "Patching service $name in namespace $ns to ClusterIP..."
+              kubectl patch svc "$name" -n "$ns" -p '{"spec":{"type":"ClusterIP"}}' || true
+            fi
+          done || true
 
-            echo "=========================================="
-            echo "Waiting 180 seconds for AWS ELB/NLB cleanup..."
-            echo "=========================================="
-            sleep 180
+          echo "=========================================="
+          echo "Waiting 180 seconds for AWS ELB/NLB cleanup..."
+          echo "=========================================="
+          sleep 180
 
-            echo "=========================================="
-            echo "Listing LoadBalancer services after cleanup..."
-            echo "=========================================="
-            kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services remaining."
+          echo "=========================================="
+          echo "Listing LoadBalancer services after cleanup..."
+          echo "=========================================="
+          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services remaining."
+
+      # ==========================
+      # REMOVE ECR FROM STATE
+      # ==========================
+      - name: Remove ECR from Terraform State (prevent_destroy fix)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "=========================================="
+          echo "Checking if ECR exists in terraform state..."
+          echo "=========================================="
+
+          terraform state list | grep aws_ecr_repository || echo "No ECR repo found in state."
+
+          if terraform state list | grep -q "aws_ecr_repository.sample_app"; then
+            echo "Removing aws_ecr_repository.sample_app from state..."
+            terraform state rm aws_ecr_repository.sample_app
           else
-            echo "=========================================="
-            echo "Cluster does not exist. Skipping Kubernetes cleanup."
-            echo "=========================================="
+            echo "ECR repo not found in state, skipping..."
           fi
 
+      # ==========================
+      # DESTROY FULL INFRA (SAFE)
+      # ==========================
       - name: Terraform Destroy (Safe - Keep ECR)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
-          echo "Step 1: Destroy EKS first (to delete AWS ELBs/NLBs)"
+          echo "Destroying full infrastructure (ECR excluded)..."
           echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks || true
 
-          echo "=========================================="
-          echo "Step 2: Destroy IAM"
-          echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam || true
-
-          echo "=========================================="
-          echo "Step 3: Destroy Networking (VPC/Subnets/NAT/IGW)"
-          echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking || true
-
-          echo "=========================================="
-          echo "Step 4: Full Destroy (cleanup remaining resources)"
-          echo "=========================================="
           terraform destroy -auto-approve -var-file=nonprod.tfvars || true
 
           echo "=========================================="
           echo "Destroy Completed."
-          echo "ECR is kept because prevent_destroy=true"
+          echo "ECR is kept because removed from state."
           echo "=========================================="
