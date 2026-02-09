@@ -87,14 +87,14 @@ jobs:
 
       - name: Terraform Plan
         if: ${{ github.event.inputs.action == 'apply' }}
-        run: terraform plan -var-file=nonprod.tfvars
+        run: terraform plan -lock-timeout=5m -var-file=nonprod.tfvars
 
       - name: Terraform Apply
         if: ${{ github.event.inputs.action == 'apply' }}
-        run: terraform apply -auto-approve -var-file=nonprod.tfvars
+        run: terraform apply -lock-timeout=5m -auto-approve -var-file=nonprod.tfvars
 
       # ======================================================
-      # DESTROY FLOW (AUTO CLEANUP)
+      # DESTROY FLOW (FULL CLEANUP)
       # ======================================================
       - name: Install kubectl (if missing)
         if: ${{ github.event.inputs.action == 'destroy' }}
@@ -107,104 +107,141 @@ jobs:
           fi
           kubectl version --client
 
-      - name: Cleanup Kubernetes Ingress + LoadBalancer Services (before destroy)
+      - name: Install Helm (if missing)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          set +e
+          if ! command -v helm >/dev/null 2>&1; then
+            echo "Installing Helm..."
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash
+          fi
+          helm version
 
+      - name: Full Cleanup Kubernetes Resources (Helm Uninstall + Delete LB Services)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
           echo "=========================================="
           echo "Updating kubeconfig..."
           echo "=========================================="
           aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME || true
 
           echo "=========================================="
-          echo "Deleting ALL Ingress resources..."
+          echo "Current Services (before cleanup)"
           echo "=========================================="
-          kubectl get ingress -A --no-headers 2>/dev/null | awk '{print $1" "$2}' | while read ns name; do
-            echo "Deleting ingress: $name in namespace: $ns"
-            kubectl delete ingress "$name" -n "$ns" --ignore-not-found=true
-          done || true
+          kubectl get svc -A || true
 
           echo "=========================================="
-          echo "Deleting ALL LoadBalancer services..."
+          echo "Uninstalling Helm releases (if exist)..."
+          echo "=========================================="
+
+          helm uninstall ingress-nginx -n ingress-nginx || true
+          helm uninstall argocd -n argocd || true
+          helm uninstall datadog -n datadog || true
+          helm uninstall external-secrets -n external-secrets || true
+
+          echo "=========================================="
+          echo "Deleting ArgoCD Applications (CRDs objects)"
+          echo "=========================================="
+          kubectl delete applications.argoproj.io --all -n argocd --ignore-not-found=true || true
+
+          echo "=========================================="
+          echo "Deleting ALL Ingress resources..."
+          echo "=========================================="
+          kubectl delete ingress --all -A --ignore-not-found=true || true
+
+          echo "=========================================="
+          echo "Deleting ALL Services of type LoadBalancer..."
           echo "=========================================="
           kubectl get svc -A --no-headers 2>/dev/null | awk '{print $1" "$2" "$4}' | while read ns name type; do
             if [ "$type" = "LoadBalancer" ]; then
-              echo "Deleting LoadBalancer service: $name in namespace: $ns"
-              kubectl delete svc "$name" -n "$ns" --ignore-not-found=true
+              echo "Deleting LoadBalancer service $name in namespace $ns ..."
+              kubectl delete svc "$name" -n "$ns" --ignore-not-found=true || true
             fi
           done || true
 
           echo "=========================================="
-          echo "Waiting 60 seconds for Kubernetes cleanup..."
+          echo "Deleting ExternalSecrets resources..."
           echo "=========================================="
-          sleep 60
+          kubectl delete externalsecret --all -A --ignore-not-found=true || true
+          kubectl delete clustersecretstore --all --ignore-not-found=true || true
 
-      - name: Export VPC ID from Terraform Output
+          echo "=========================================="
+          echo "Deleting Namespaces (force cleanup)"
+          echo "=========================================="
+          kubectl delete ns ingress-nginx --ignore-not-found=true || true
+          kubectl delete ns argocd --ignore-not-found=true || true
+          kubectl delete ns datadog --ignore-not-found=true || true
+          kubectl delete ns external-secrets --ignore-not-found=true || true
+
+          echo "=========================================="
+          echo "Waiting 240 seconds for AWS LoadBalancers cleanup..."
+          echo "=========================================="
+          sleep 240
+
+          echo "=========================================="
+          echo "Checking if any LoadBalancer service still exists..."
+          echo "=========================================="
+          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found ✅"
+
+      - name: Cleanup AWS Load Balancers Manually (Force Delete)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
-          echo "Reading VPC ID from Terraform output..."
+          echo "Searching for Classic ELBs created by Kubernetes..."
           echo "=========================================="
 
-          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null)
+          ELBS=$(aws elb describe-load-balancers --region $AWS_REGION --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null || true)
 
-          if [ -z "$VPC_ID" ]; then
-            echo "❌ Could not detect VPC_ID from terraform output"
-            echo "Terraform state might be broken or already destroyed."
-            exit 1
+          if [ -z "$ELBS" ]; then
+            echo "No Classic ELBs found ✅"
+          else
+            echo "Found Classic ELBs:"
+            echo "$ELBS"
+
+            for elb in $ELBS; do
+              echo "Deleting Classic ELB: $elb"
+              aws elb delete-load-balancer --load-balancer-name "$elb" --region $AWS_REGION || true
+            done
           fi
 
-          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
-          echo "Detected VPC ID: $VPC_ID"
-
-      - name: Wait for AWS LoadBalancers cleanup (Only this VPC)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        run: |
           echo "=========================================="
-          echo "Waiting for AWS LoadBalancers to be deleted in VPC: $VPC_ID"
+          echo "Searching for ALB/NLB created by Kubernetes..."
           echo "=========================================="
 
-          echo "Checking Classic LoadBalancers (ELB)..."
-          for i in {1..40}; do
-            COUNT=$(aws elb describe-load-balancers --region $AWS_REGION \
-              --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'] | length(@)" \
-              --output text 2>/dev/null)
+          LBS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null || true)
 
-            if [ "$COUNT" = "0" ]; then
-              echo "✅ No Classic LoadBalancers found in this VPC"
-              break
-            fi
+          if [ -z "$LBS" ]; then
+            echo "No ALB/NLB found ✅"
+          else
+            echo "Found ALB/NLB:"
+            echo "$LBS"
 
-            echo "⏳ Still $COUNT Classic LoadBalancers exist in this VPC... (attempt $i/40)"
-            aws elb describe-load-balancers --region $AWS_REGION \
-              --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'].[LoadBalancerName,DNSName]" \
-              --output table || true
-
-            sleep 30
-          done
-
-          echo "Checking ALB/NLB (ELBv2)..."
-          for i in {1..40}; do
-            COUNT=$(aws elbv2 describe-load-balancers --region $AWS_REGION \
-              --query "LoadBalancers[?VpcId=='$VPC_ID'] | length(@)" \
-              --output text 2>/dev/null)
-
-            if [ "$COUNT" = "0" ]; then
-              echo "✅ No ALB/NLB found in this VPC"
-              break
-            fi
-
-            echo "⏳ Still $COUNT ALB/NLB exist in this VPC... (attempt $i/40)"
-            aws elbv2 describe-load-balancers --region $AWS_REGION \
-              --query "LoadBalancers[?VpcId=='$VPC_ID'].[LoadBalancerName,DNSName,Type]" \
-              --output table || true
-
-            sleep 30
-          done
+            for lb in $LBS; do
+              echo "Deleting LB ARN: $lb"
+              aws elbv2 delete-load-balancer --load-balancer-arn "$lb" --region $AWS_REGION || true
+            done
+          fi
 
           echo "=========================================="
-          echo "AWS LoadBalancer cleanup check finished."
+          echo "Waiting 180 seconds for TargetGroups cleanup..."
+          echo "=========================================="
+          sleep 180
+
+          echo "=========================================="
+          echo "Deleting leftover Target Groups..."
+          echo "=========================================="
+          TGS=$(aws elbv2 describe-target-groups --region $AWS_REGION --query 'TargetGroups[].TargetGroupArn' --output text 2>/dev/null || true)
+
+          if [ -z "$TGS" ]; then
+            echo "No Target Groups found ✅"
+          else
+            for tg in $TGS; do
+              echo "Deleting TargetGroup: $tg"
+              aws elbv2 delete-target-group --target-group-arn "$tg" --region $AWS_REGION || true
+            done
+          fi
+
+          echo "=========================================="
+          echo "AWS LoadBalancer cleanup finished ✅"
           echo "=========================================="
 
       - name: Terraform Destroy (Safe - Keep ECR)
@@ -213,19 +250,19 @@ jobs:
           echo "=========================================="
           echo "Destroying EKS first..."
           echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks || true
+          terraform destroy -lock-timeout=10m -auto-approve -var-file=nonprod.tfvars -target=module.eks || true
 
           echo "=========================================="
           echo "Destroying IAM..."
           echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam || true
+          terraform destroy -lock-timeout=10m -auto-approve -var-file=nonprod.tfvars -target=module.iam || true
 
           echo "=========================================="
           echo "Destroying Networking..."
           echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking || true
+          terraform destroy -lock-timeout=10m -auto-approve -var-file=nonprod.tfvars -target=module.networking || true
 
           echo "=========================================="
           echo "Destroy Completed."
-          echo "ECR repos are kept because prevent_destroy=true"
+          echo "ECR is kept because prevent_destroy=true"
           echo "=========================================="
