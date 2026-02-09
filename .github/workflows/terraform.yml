@@ -25,6 +25,7 @@ jobs:
     env:
       AWS_REGION: eu-west-1
       CLUSTER_NAME: nti-nonprod-eks
+      ECR_REPO_NAME: cloud-native-sample-app
 
     steps:
       - name: Checkout repository
@@ -45,9 +46,35 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
-      # ==========================
+      # ======================================================
       # APPLY FLOW
-      # ==========================
+      # ======================================================
+      - name: Auto Import ECR Repo if exists (Fix RepositoryAlreadyExists)
+        if: ${{ github.event.inputs.action == 'apply' }}
+        run: |
+          echo "=========================================="
+          echo "Checking if ECR repo exists in AWS..."
+          echo "=========================================="
+
+          if aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "ECR repo exists in AWS: $ECR_REPO_NAME"
+          else
+            echo "ECR repo does not exist in AWS. Terraform will create it normally."
+            exit 0
+          fi
+
+          echo "=========================================="
+          echo "Checking if ECR repo exists in Terraform state..."
+          echo "=========================================="
+
+          if terraform state list | grep -q "aws_ecr_repository.sample_app"; then
+            echo "ECR repo already exists in Terraform state."
+          else
+            echo "ECR repo missing in state -> importing..."
+            terraform import aws_ecr_repository.sample_app "$ECR_REPO_NAME"
+            echo "Import completed."
+          fi
+
       - name: Terraform Plan
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform plan -var-file=nonprod.tfvars
@@ -56,9 +83,9 @@ jobs:
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
-      # ==========================
+      # ======================================================
       # DESTROY FLOW (AUTO CLEANUP)
-      # ==========================
+      # ======================================================
       - name: Install kubectl (if missing)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
@@ -102,18 +129,22 @@ jobs:
           echo "=========================================="
           sleep 180
 
-      # ==========================
-      # DESTROY FULL INFRA (EXCEPT ECR)
-      # ==========================
       - name: Terraform Destroy (Safe - Keep ECR)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
-          echo "Destroying full infrastructure except ECR..."
+          echo "Destroying EKS first..."
           echo "=========================================="
-
           terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks || true
+
+          echo "=========================================="
+          echo "Destroying IAM..."
+          echo "=========================================="
           terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam || true
+
+          echo "=========================================="
+          echo "Destroying Networking..."
+          echo "=========================================="
           terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking || true
 
           echo "=========================================="
