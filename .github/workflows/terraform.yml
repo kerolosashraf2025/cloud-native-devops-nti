@@ -56,6 +56,7 @@ jobs:
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform apply -auto-approve -var-file=nonprod.tfvars
 
+
       # ==========================
       # DESTROY FLOW (AUTO CLEANUP)
       # ==========================
@@ -76,25 +77,20 @@ jobs:
           echo "=========================================="
           echo "Updating kubeconfig..."
           echo "=========================================="
-          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME || true
 
           echo "=========================================="
-          echo "Listing LoadBalancer services before cleanup..."
-          echo "=========================================="
-          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found."
-
-          echo "=========================================="
-          echo "Deleting ALL Ingress resources (all namespaces)..."
+          echo "Deleting ALL Ingress resources..."
           echo "=========================================="
           kubectl get ingress -A --no-headers 2>/dev/null | awk '{print $1" "$2}' | while read ns name; do
             echo "Deleting ingress: $name in namespace: $ns"
-            kubectl delete ingress "$name" -n "$ns" --ignore-not-found=true
+            kubectl delete ingress "$name" -n "$ns" --ignore-not-found=true || true
           done
 
           echo "=========================================="
           echo "Patching ALL LoadBalancer services to ClusterIP..."
           echo "=========================================="
-          kubectl get svc -A --no-headers | awk '{print $1" "$2" "$4}' | while read ns name type; do
+          kubectl get svc -A --no-headers 2>/dev/null | awk '{print $1" "$2" "$4}' | while read ns name type; do
             if [ "$type" = "LoadBalancer" ]; then
               echo "Patching service $name in namespace $ns to ClusterIP..."
               kubectl patch svc "$name" -n "$ns" -p '{"spec":{"type":"ClusterIP"}}' || true
@@ -102,34 +98,78 @@ jobs:
           done
 
           echo "=========================================="
-          echo "Waiting 180 seconds for AWS ELB/NLB cleanup..."
+          echo "Waiting 120 seconds for Kubernetes cleanup..."
           echo "=========================================="
-          sleep 180
+          sleep 120
 
-          echo "=========================================="
-          echo "Listing LoadBalancer services after cleanup..."
-          echo "=========================================="
-          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services remaining."
 
-      - name: Terraform Destroy (Safe - Keep ECR)
+      - name: Force Delete AWS LoadBalancers (ELBv2)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
-          echo "Step 1: Destroy EKS first (to delete AWS ELBs/NLBs)"
+          echo "Deleting ALL AWS LoadBalancers in region $AWS_REGION..."
           echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.eks
+
+          LBS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query "LoadBalancers[].LoadBalancerArn" --output text || true)
+
+          if [ -z "$LBS" ]; then
+            echo "No ELBv2 load balancers found."
+          else
+            for lb in $LBS; do
+              echo "Deleting LB: $lb"
+              aws elbv2 delete-load-balancer --region $AWS_REGION --load-balancer-arn "$lb" || true
+            done
+          fi
+
+          echo "Waiting 180 seconds for LoadBalancers deletion..."
+          sleep 180
+
+
+      - name: Force Delete NAT Gateways + Release EIPs
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "=========================================="
+          echo "Deleting NAT Gateways..."
+          echo "=========================================="
+
+          NATS=$(aws ec2 describe-nat-gateways --region $AWS_REGION --query "NatGateways[].NatGatewayId" --output text || true)
+
+          if [ -z "$NATS" ]; then
+            echo "No NAT Gateways found."
+          else
+            for nat in $NATS; do
+              echo "Deleting NAT Gateway: $nat"
+              aws ec2 delete-nat-gateway --region $AWS_REGION --nat-gateway-id "$nat" || true
+            done
+          fi
+
+          echo "Waiting 240 seconds for NAT Gateways deletion..."
+          sleep 240
 
           echo "=========================================="
-          echo "Step 2: Destroy IAM"
+          echo "Releasing ALL Elastic IPs..."
           echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.iam
 
+          EIPS=$(aws ec2 describe-addresses --region $AWS_REGION --query "Addresses[].AllocationId" --output text || true)
+
+          if [ -z "$EIPS" ]; then
+            echo "No Elastic IPs found."
+          else
+            for eip in $EIPS; do
+              echo "Releasing EIP: $eip"
+              aws ec2 release-address --region $AWS_REGION --allocation-id "$eip" || true
+            done
+          fi
+
+
+      - name: Terraform Destroy (Full)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
           echo "=========================================="
-          echo "Step 3: Destroy Networking (VPC/Subnets/NAT/IGW)"
+          echo "Running FULL terraform destroy..."
           echo "=========================================="
-          terraform destroy -auto-approve -var-file=nonprod.tfvars -target=module.networking
+          terraform destroy -auto-approve -var-file=nonprod.tfvars
 
           echo "=========================================="
           echo "Destroy Completed."
-          echo "ECR is kept because prevent_destroy=true"
           echo "=========================================="
