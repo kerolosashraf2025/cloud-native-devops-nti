@@ -40,7 +40,7 @@ jobs:
           fi
 
       # ==========================
-      # Install Helm (FIXED)
+      # Install Helm
       # ==========================
       - name: Install Helm (if missing)
         run: |
@@ -66,17 +66,42 @@ jobs:
         run: kubectl get nodes
 
       # ==========================
-      # Bootstrap Tools
+      # Create namespaces
       # ==========================
       - name: Create namespaces
         run: kubectl apply -f bootstrap/namespaces.yaml
 
+      # ==========================
+      # Install Ingress NGINX
+      # ==========================
       - name: Install Ingress NGINX
         run: bash bootstrap/helm/ingress-nginx.sh
 
+      # ==========================
+      # Install ArgoCD
+      # ==========================
       - name: Install ArgoCD
         run: bash bootstrap/helm/argocd.sh
 
+      # ==========================
+      # Wait for ArgoCD to be Ready
+      # ==========================
+      - name: Wait for ArgoCD server
+        run: |
+          echo "Waiting for ArgoCD server to be ready..."
+          kubectl rollout status deployment/argocd-server -n argocd --timeout=600s
+
+      # ==========================
+      # Apply ArgoCD Application (GitOps)
+      # ==========================
+      - name: Apply Sample App ArgoCD Application
+        run: |
+          echo "Applying ArgoCD Application..."
+          kubectl apply -f gitops/nonprod/argocd/sample-app-application.yaml
+
+      # ==========================
+      # Install Datadog
+      # ==========================
       - name: Install Datadog
         run: bash bootstrap/helm/datadog/install-datadog.sh
         env:
@@ -102,8 +127,17 @@ jobs:
           echo "EXTERNAL_SECRETS_ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
           echo "External Secrets Role ARN: $ROLE_ARN"
 
+      # ==========================
+      # Install External Secrets Operator
+      # ==========================
       - name: Install External Secrets Operator
         run: bash bootstrap/helm/external-secrets/install-external-secrets.sh
 
       - name: Verify External Secrets Operator
         run: kubectl get pods -n external-secrets
+
+      # ==========================
+      # Show Status
+      # ==========================
+      - name: Show ArgoCD Applications
+        run: kubectl get applications -n argocd || true
