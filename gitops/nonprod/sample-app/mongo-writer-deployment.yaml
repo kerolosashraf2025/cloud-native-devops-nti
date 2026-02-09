@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo-writer
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo-writer
+  template:
+    metadata:
+      labels:
+        app: mongo-writer
+    spec:
+      containers:
+        - name: mongo-writer
+          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer:latest
+
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongo-secret
+                  key: MONGODB_URI
+
+            - name: REDIS_HOST
+              value: "redis"
+
+            - name: REDIS_PORT
+              value: "6379"
+
+            - name: DB_NAME
+              value: "nti-db"
+
+            - name: COLLECTION_NAME
+              value: "votes"
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"

@@ -25,7 +25,8 @@ jobs:
     env:
       AWS_REGION: eu-west-1
       CLUSTER_NAME: nti-nonprod-eks
-      ECR_REPO_NAME: cloud-native-sample-app
+      ECR_REPO_NAME_APP: cloud-native-sample-app
+      ECR_REPO_NAME_WRITER: cloud-native-mongo-writer
 
     steps:
       - name: Checkout repository
@@ -49,31 +50,40 @@ jobs:
       # ======================================================
       # APPLY FLOW
       # ======================================================
-      - name: Auto Import ECR Repo if exists (Fix RepositoryAlreadyExists)
+      - name: Auto Import ECR Repos if exist
         if: ${{ github.event.inputs.action == 'apply' }}
         run: |
           echo "=========================================="
-          echo "Checking if ECR repo exists in AWS..."
+          echo "Checking ECR repos in AWS..."
           echo "=========================================="
 
-          if aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "ECR repo exists in AWS: $ECR_REPO_NAME"
-          else
-            echo "ECR repo does not exist in AWS. Terraform will create it normally."
-            exit 0
-          fi
+          check_and_import_repo () {
+            REPO_NAME=$1
+            TF_RESOURCE=$2
 
-          echo "=========================================="
-          echo "Checking if ECR repo exists in Terraform state..."
-          echo "=========================================="
+            echo "------------------------------------------"
+            echo "Repo: $REPO_NAME"
+            echo "Terraform Resource: $TF_RESOURCE"
+            echo "------------------------------------------"
 
-          if terraform state list | grep -q "aws_ecr_repository.sample_app"; then
-            echo "ECR repo already exists in Terraform state."
-          else
-            echo "ECR repo missing in state -> importing..."
-            terraform import aws_ecr_repository.sample_app "$ECR_REPO_NAME"
-            echo "Import completed."
-          fi
+            if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+              echo "Repo exists in AWS: $REPO_NAME"
+            else
+              echo "Repo does not exist in AWS. Terraform will create it."
+              return
+            fi
+
+            if terraform state list | grep -q "$TF_RESOURCE"; then
+              echo "Repo already exists in Terraform state: $TF_RESOURCE"
+            else
+              echo "Repo missing in state -> importing..."
+              terraform import "$TF_RESOURCE" "$REPO_NAME"
+              echo "Import completed."
+            fi
+          }
+
+          check_and_import_repo "$ECR_REPO_NAME_APP" "aws_ecr_repository.sample_app"
+          check_and_import_repo "$ECR_REPO_NAME_WRITER" "aws_ecr_repository.mongo_writer"
 
       - name: Terraform Plan
         if: ${{ github.event.inputs.action == 'apply' }}
@@ -217,5 +227,5 @@ jobs:
 
           echo "=========================================="
           echo "Destroy Completed."
-          echo "ECR is kept because prevent_destroy=true"
+          echo "ECR repos are kept because prevent_destroy=true"
           echo "=========================================="

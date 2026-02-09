@@ -1,4 +1,4 @@
-name: CI - Build & Push Docker Image
+name: CI - Build & Push Docker Images
 
 on:
   workflow_dispatch:
@@ -7,11 +7,13 @@ on:
       - main
     paths:
       - "app/**"
+      - "mongo-writer/**"
       - ".github/workflows/ci.yml"
 
 env:
   AWS_REGION: eu-west-1
-  ECR_REPOSITORY: cloud-native-sample-app
+  ECR_REPOSITORY_APP: cloud-native-sample-app
+  ECR_REPOSITORY_WRITER: cloud-native-mongo-writer
 
 jobs:
   build-and-push:
@@ -32,23 +34,46 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Set Image Tag
-        id: vars
         run: |
           echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      - name: Build, tag, and push image to ECR
+      # ======================================================
+      # Build & Push Voting App Image
+      # ======================================================
+      - name: Build and Push Voting App Image
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          IMAGE_URI=$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}
+          IMAGE_URI_APP=$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_APP}:${IMAGE_TAG}
 
-          docker build -t $IMAGE_URI ./app
-          docker push $IMAGE_URI
+          echo "Building Voting App Image..."
+          docker build -t $IMAGE_URI_APP ./app
+          docker push $IMAGE_URI_APP
 
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          echo "IMAGE_URI_APP=$IMAGE_URI_APP" >> $GITHUB_ENV
+          echo "Voting App pushed: $IMAGE_URI_APP"
 
-      - name: Update GitOps Deployment Image Tag
+      # ======================================================
+      # Build & Push Mongo Writer Image
+      # ======================================================
+      - name: Build and Push Mongo Writer Image
         run: |
-          sed -i "s|image:.*|image: ${IMAGE_URI}|g" gitops/nonprod/sample-app/deployment.yaml
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI_WRITER=$ACCOUNT_ID.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_WRITER}:${IMAGE_TAG}
+
+          echo "Building Mongo Writer Image..."
+          docker build -t $IMAGE_URI_WRITER ./mongo-writer
+          docker push $IMAGE_URI_WRITER
+
+          echo "IMAGE_URI_WRITER=$IMAGE_URI_WRITER" >> $GITHUB_ENV
+          echo "Mongo Writer pushed: $IMAGE_URI_WRITER"
+
+      # ======================================================
+      # Update GitOps Manifests
+      # ======================================================
+      - name: Update GitOps Deployment Image Tags
+        run: |
+          sed -i "s|image:.*cloud-native-sample-app:.*|image: ${IMAGE_URI_APP}|g" gitops/nonprod/sample-app/deployment.yaml
+          sed -i "s|image:.*cloud-native-mongo-writer:.*|image: ${IMAGE_URI_WRITER}|g" gitops/nonprod/sample-app/mongo-writer-deployment.yaml
 
       - name: Commit & Push GitOps changes
         run: |
@@ -56,11 +81,14 @@ jobs:
           git config user.email "github-actions@github.com"
 
           git add gitops/nonprod/sample-app/deployment.yaml
-          git commit -m "Update sample-app image tag to ${IMAGE_TAG}" || echo "No changes to commit"
+          git add gitops/nonprod/sample-app/mongo-writer-deployment.yaml
+
+          git commit -m "Update images to ${IMAGE_TAG}" || echo "No changes to commit"
 
           git pull --rebase origin main
           git push origin main
 
-      - name: Print Image URI
+      - name: Print Image URIs
         run: |
-          echo "Pushed image: ${IMAGE_URI}"
+          echo "Voting App Image: ${IMAGE_URI_APP}"
+          echo "Mongo Writer Image: ${IMAGE_URI_WRITER}"
