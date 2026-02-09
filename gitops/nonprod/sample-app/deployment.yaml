@@ -15,35 +15,35 @@ spec:
     spec:
       containers:
         - name: sample-app
-          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:b199116
+          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:latest
           ports:
-            - containerPort: 3000
+            - containerPort: 80
 
           env:
-            - name: MONGODB_URI
-              valueFrom:
-                secretKeyRef:
-                  name: mongo-secret
-                  key: MONGODB_URI
+            - name: REDIS_HOST
+              value: "redis"
 
-            - name: DB_NAME
-              value: "nti-db"
+            - name: REDIS_PORT
+              value: "6379"
 
-            - name: COLLECTION_NAME
-              value: "messages"
+            - name: OPTION_A
+              value: "Cats"
+
+            - name: OPTION_B
+              value: "Dogs"
 
           readinessProbe:
             httpGet:
-              path: /health
-              port: 3000
+              path: /
+              port: 80
             initialDelaySeconds: 10
             periodSeconds: 10
             failureThreshold: 5
 
           livenessProbe:
             httpGet:
-              path: /health
-              port: 3000
+              path: /
+              port: 80
             initialDelaySeconds: 20
             periodSeconds: 15
             failureThreshold: 5

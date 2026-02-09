@@ -2,5 +2,5 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
-  - clustersecretstore.yaml
-  - externalsecret.yaml
+  - redis-deployment.yaml
+  - redis-service.yaml
