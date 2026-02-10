@@ -182,7 +182,6 @@ jobs:
 
           set +e
 
-          # Attempt common NodeGroup module names (in case of different state paths)
           terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.eks.module.eks_managed_node_group || true
           terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.eks.module.eks_managed_node_groups || true
 
@@ -223,6 +222,22 @@ jobs:
           terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.networking
 
           echo "Networking destroyed ✅"
+
+      - name: Remove ECR from Terraform State (Keep ECR in AWS)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          echo "=========================================="
+          echo "Removing ECR from Terraform state (keeping ECR in AWS)..."
+          echo "=========================================="
+
+          set +e
+
+          terraform state list | grep aws_ecr_repository || true
+
+          terraform state rm aws_ecr_repository.sample_app || true
+          terraform state rm aws_ecr_repository.mongo_writer || true
+
+          echo "ECR removed from Terraform state ✅"
 
       - name: Terraform Destroy Remaining Resources
         if: ${{ github.event.inputs.action == 'destroy' }}
