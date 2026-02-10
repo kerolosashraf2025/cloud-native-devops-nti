@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: mongo-writer
-          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer:34b6880
+          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer:latest
 
           env:
             - name: MONGODB_URI

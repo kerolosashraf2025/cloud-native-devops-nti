@@ -15,22 +15,22 @@ spec:
     spec:
       containers:
         - name: sample-app
-          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:34b6880
+          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app:latest
           ports:
             - containerPort: 80
 
           env:
-            - name: REDIS_HOST
-              value: "redis"
-
-            - name: REDIS_PORT
-              value: "6379"
-
             - name: OPTION_A
               value: "Cats"
 
             - name: OPTION_B
               value: "Dogs"
+
+            - name: REDIS_HOST
+              value: "redis"
+
+            - name: REDIS_PORT
+              value: "6379"
 
           readinessProbe:
             httpGet:

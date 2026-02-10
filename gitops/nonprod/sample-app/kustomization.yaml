@@ -2,11 +2,15 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
-
   - redis-deployment.yaml
   - redis-service.yaml
-
   - clustersecretstore.yaml
   - externalsecret.yaml
-
   - mongo-writer-deployment.yaml
+
+images:
+  - name: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app
+    newTag: latest
+
+  - name: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer
+    newTag: latest
