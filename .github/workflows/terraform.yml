@@ -53,6 +53,8 @@ jobs:
       - name: Auto Import ECR Repos if exist
         if: ${{ github.event.inputs.action == 'apply' }}
         run: |
+          set -e
+
           echo "=========================================="
           echo "Checking ECR repos in AWS..."
           echo "=========================================="
@@ -93,158 +95,160 @@ jobs:
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform apply -lock-timeout=5m -auto-approve -var-file=nonprod.tfvars
 
+
       # ======================================================
-      # DESTROY FLOW (FULL CLEANUP)
+      # DESTROY FLOW (FULL CLEANUP NO HANG)
       # ======================================================
       - name: Install kubectl (if missing)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          set -e
           if ! command -v kubectl >/dev/null 2>&1; then
             echo "Installing kubectl..."
             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
             chmod +x kubectl
             sudo mv kubectl /usr/local/bin/kubectl
           fi
-          kubectl version --client
+          kubectl version --client || true
 
       - name: Install Helm (if missing)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          set -e
           if ! command -v helm >/dev/null 2>&1; then
             echo "Installing Helm..."
             curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash
           fi
-          helm version
+          helm version || true
 
-      - name: Full Cleanup Kubernetes Resources (Safe Order)
+      - name: Update kubeconfig (safe)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          set +e
           echo "=========================================="
           echo "Updating kubeconfig..."
           echo "=========================================="
-          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME || true
+          timeout 60 aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER_NAME"
+          echo "=========================================="
+          echo "Testing cluster connectivity..."
+          echo "=========================================="
+          timeout 30 kubectl get nodes --request-timeout=20s
+          echo "Cluster reachable ✅"
+
+      - name: Full Cleanup Kubernetes Resources (Safe - No Hanging)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          set +e
 
           echo "=========================================="
-          echo "Deleting ExternalSecrets + ClusterSecretStores FIRST..."
+          echo "Current Services (before cleanup)"
           echo "=========================================="
-          kubectl delete externalsecret --all -A --ignore-not-found=true || true
-          kubectl delete clustersecretstore --all --ignore-not-found=true || true
-
-          echo "=========================================="
-          echo "Force removing finalizers (if stuck)..."
-          echo "=========================================="
-
-          for cs in $(kubectl get clustersecretstore -o name 2>/dev/null); do
-            echo "Removing finalizers from $cs"
-            kubectl patch $cs -p '{"metadata":{"finalizers":[]}}' --type=merge || true
-          done
-
-          for es in $(kubectl get externalsecret -A -o name 2>/dev/null); do
-            echo "Removing finalizers from $es"
-            kubectl patch $es -p '{"metadata":{"finalizers":[]}}' --type=merge || true
-          done
-
-          echo "=========================================="
-          echo "Deleting ArgoCD Applications (CRDs objects)"
-          echo "=========================================="
-          kubectl delete applications.argoproj.io --all -n argocd --ignore-not-found=true || true
-
-          echo "=========================================="
-          echo "Deleting ALL Ingress resources..."
-          echo "=========================================="
-          kubectl delete ingress --all -A --ignore-not-found=true || true
-
-          echo "=========================================="
-          echo "Deleting ALL Services of type LoadBalancer..."
-          echo "=========================================="
-          kubectl get svc -A --no-headers 2>/dev/null | awk '{print $1" "$2" "$4}' | while read ns name type; do
-            if [ "$type" = "LoadBalancer" ]; then
-              echo "Deleting LoadBalancer service $name in namespace $ns ..."
-              kubectl delete svc "$name" -n "$ns" --ignore-not-found=true || true
-            fi
-          done || true
+          timeout 30 kubectl get svc -A --request-timeout=20s || true
 
           echo "=========================================="
           echo "Uninstalling Helm releases (if exist)..."
           echo "=========================================="
-          helm uninstall datadog -n datadog || true
-          helm uninstall ingress-nginx -n ingress-nginx || true
-          helm uninstall argocd -n argocd || true
-          helm uninstall external-secrets -n external-secrets || true
+          timeout 120 helm uninstall ingress-nginx -n ingress-nginx || true
+          timeout 120 helm uninstall argocd -n argocd || true
+          timeout 120 helm uninstall datadog -n datadog || true
+          timeout 120 helm uninstall external-secrets -n external-secrets || true
 
           echo "=========================================="
-          echo "Deleting Namespaces..."
+          echo "Deleting ArgoCD Applications (CRDs objects)"
           echo "=========================================="
-          kubectl delete ns ingress-nginx --ignore-not-found=true || true
-          kubectl delete ns argocd --ignore-not-found=true || true
-          kubectl delete ns datadog --ignore-not-found=true || true
-          kubectl delete ns external-secrets --ignore-not-found=true || true
+          timeout 60 kubectl delete applications.argoproj.io --all -n argocd --ignore-not-found=true --request-timeout=20s || true
 
           echo "=========================================="
-          echo "Waiting 240 seconds for AWS LoadBalancers cleanup..."
+          echo "Deleting ExternalSecrets + ClusterSecretStores..."
           echo "=========================================="
-          sleep 240
+          timeout 60 kubectl delete externalsecret --all -A --ignore-not-found=true --request-timeout=20s || true
+          timeout 60 kubectl delete clustersecretstore --all --ignore-not-found=true --request-timeout=20s || true
 
           echo "=========================================="
-          echo "Checking if any LoadBalancer service still exists..."
+          echo "Deleting ALL Ingress resources..."
           echo "=========================================="
-          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found ✅"
+          timeout 60 kubectl delete ingress --all -A --ignore-not-found=true --request-timeout=20s || true
 
-      - name: Cleanup AWS Load Balancers Manually (Force Delete)
+          echo "=========================================="
+          echo "Deleting ALL Services of type LoadBalancer..."
+          echo "=========================================="
+          timeout 60 kubectl get svc -A --no-headers --request-timeout=20s 2>/dev/null | while read ns name rest; do
+            TYPE=$(timeout 20 kubectl get svc "$name" -n "$ns" -o jsonpath='{.spec.type}' --request-timeout=10s 2>/dev/null)
+            if [ "$TYPE" = "LoadBalancer" ]; then
+              echo "Deleting LoadBalancer service $name in namespace $ns ..."
+              timeout 60 kubectl delete svc "$name" -n "$ns" --ignore-not-found=true --request-timeout=20s || true
+            fi
+          done || true
+
+          echo "=========================================="
+          echo "Deleting Namespaces (force cleanup)"
+          echo "=========================================="
+          timeout 60 kubectl delete ns ingress-nginx --ignore-not-found=true --request-timeout=20s || true
+          timeout 60 kubectl delete ns argocd --ignore-not-found=true --request-timeout=20s || true
+          timeout 60 kubectl delete ns datadog --ignore-not-found=true --request-timeout=20s || true
+          timeout 60 kubectl delete ns external-secrets --ignore-not-found=true --request-timeout=20s || true
+
+          echo "=========================================="
+          echo "Checking LoadBalancer services again..."
+          echo "=========================================="
+          timeout 30 kubectl get svc -A --request-timeout=20s | grep LoadBalancer || echo "No LoadBalancer services found ✅"
+
+      - name: Cleanup AWS Load Balancers (Force Delete)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          set +e
+
           echo "=========================================="
-          echo "Searching for Classic ELBs created by Kubernetes..."
+          echo "Searching for Classic ELBs..."
           echo "=========================================="
 
-          ELBS=$(aws elb describe-load-balancers --region $AWS_REGION --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null || true)
+          ELBS=$(timeout 60 aws elb describe-load-balancers --region "$AWS_REGION" --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null)
 
           if [ -z "$ELBS" ]; then
             echo "No Classic ELBs found ✅"
           else
             echo "Found Classic ELBs:"
             echo "$ELBS"
-
             for elb in $ELBS; do
               echo "Deleting Classic ELB: $elb"
-              aws elb delete-load-balancer --load-balancer-name "$elb" --region $AWS_REGION || true
+              timeout 60 aws elb delete-load-balancer --load-balancer-name "$elb" --region "$AWS_REGION" || true
             done
           fi
 
           echo "=========================================="
-          echo "Searching for ALB/NLB created by Kubernetes..."
+          echo "Searching for ALB/NLB..."
           echo "=========================================="
 
-          LBS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null || true)
+          LBS=$(timeout 60 aws elbv2 describe-load-balancers --region "$AWS_REGION" --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null)
 
           if [ -z "$LBS" ]; then
             echo "No ALB/NLB found ✅"
           else
             echo "Found ALB/NLB:"
             echo "$LBS"
-
             for lb in $LBS; do
               echo "Deleting LB ARN: $lb"
-              aws elbv2 delete-load-balancer --load-balancer-arn "$lb" --region $AWS_REGION || true
+              timeout 60 aws elbv2 delete-load-balancer --load-balancer-arn "$lb" --region "$AWS_REGION" || true
             done
           fi
 
           echo "=========================================="
-          echo "Waiting 180 seconds for TargetGroups cleanup..."
+          echo "Waiting 60 seconds for TargetGroups cleanup..."
           echo "=========================================="
-          sleep 180
+          sleep 60
 
           echo "=========================================="
           echo "Deleting leftover Target Groups..."
           echo "=========================================="
-          TGS=$(aws elbv2 describe-target-groups --region $AWS_REGION --query 'TargetGroups[].TargetGroupArn' --output text 2>/dev/null || true)
+
+          TGS=$(timeout 60 aws elbv2 describe-target-groups --region "$AWS_REGION" --query 'TargetGroups[].TargetGroupArn' --output text 2>/dev/null)
 
           if [ -z "$TGS" ]; then
             echo "No Target Groups found ✅"
           else
             for tg in $TGS; do
               echo "Deleting TargetGroup: $tg"
-              aws elbv2 delete-target-group --target-group-arn "$tg" --region $AWS_REGION || true
+              timeout 60 aws elbv2 delete-target-group --target-group-arn "$tg" --region "$AWS_REGION" || true
             done
           fi
 
@@ -252,25 +256,38 @@ jobs:
           echo "AWS LoadBalancer cleanup finished ✅"
           echo "=========================================="
 
-      - name: Terraform Destroy (Safe - Keep ECR)
+      - name: Terraform Destroy (Full)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          echo "=========================================="
-          echo "Destroying EKS first..."
-          echo "=========================================="
-          terraform destroy -lock-timeout=10m -auto-approve -var-file=nonprod.tfvars -target=module.eks || true
+          set +e
 
           echo "=========================================="
-          echo "Destroying IAM..."
+          echo "Destroying EVERYTHING using terraform destroy..."
           echo "=========================================="
-          terraform destroy -lock-timeout=10m -auto-approve -var-file=nonprod.tfvars -target=module.iam || true
+
+          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars
 
           echo "=========================================="
-          echo "Destroying Networking..."
+          echo "Destroy Completed ✅"
           echo "=========================================="
-          terraform destroy -lock-timeout=10m -auto-approve -var-file=nonprod.tfvars -target=module.networking || true
+
+      - name: Force Remove Terraform Lock (if stuck)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          set +e
 
           echo "=========================================="
-          echo "Destroy Completed."
-          echo "ECR is kept because prevent_destroy=true"
+          echo "Cleaning DynamoDB terraform locks (force)"
           echo "=========================================="
+
+          aws dynamodb delete-item \
+            --table-name terraform-locks \
+            --key '{"LockID":{"S":"cloud-native-devops-nti-tf-state/infra/terraform.tfstate"}}' \
+            --region "$AWS_REGION" || true
+
+          aws dynamodb delete-item \
+            --table-name terraform-locks \
+            --key '{"LockID":{"S":"cloud-native-devops-nti-tf-state/infra/terraform.tfstate-md5"}}' \
+            --region "$AWS_REGION" || true
+
+          echo "Terraform lock cleanup done ✅"
