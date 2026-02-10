@@ -3,16 +3,19 @@ kind: Kustomization
 
 resources:
   - deployment.yaml
+  - mongo-writer-deployment.yaml
+  - redis-deployment.yaml
+  - redis-service.yaml
   - service.yaml
   - ingress.yaml
-  - redis-deployment.yaml
-  - mongo-writer-deployment.yaml
+  - externalsecret.yaml
+  - clustersecretstore.yaml
 
 images:
   - name: cloud-native-sample-app
     newName: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app
-    newTag: REPLACE_TAG
+    newTag: 0000000
 
   - name: cloud-native-mongo-writer
     newName: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer
-    newTag: REPLACE_TAG
+    newTag: 0000000

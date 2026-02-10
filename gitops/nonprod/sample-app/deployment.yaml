@@ -2,8 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: sample-app
-  labels:
-    app: sample-app
 spec:
   replicas: 2
   selector:
@@ -25,29 +23,6 @@ spec:
             - name: OPTION_B
               value: "Dogs"
             - name: REDIS_HOST
-              value: "redis"
+              value: redis
             - name: REDIS_PORT
               value: "6379"
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 80
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            timeoutSeconds: 1
-            failureThreshold: 3
-          livenessProbe:
-            httpGet:
-              path: /
-              port: 80
-            initialDelaySeconds: 20
-            periodSeconds: 15
-            timeoutSeconds: 1
-            failureThreshold: 3
-          resources:
-            requests:
-              cpu: "100m"
-              memory: "128Mi"
-            limits:
-              cpu: "300m"
-              memory: "256Mi"

@@ -2,8 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mongo-writer
-  labels:
-    app: mongo-writer
 spec:
   replicas: 1
   selector:
@@ -23,23 +21,11 @@ spec:
                 secretKeyRef:
                   name: mongo-secret
                   key: MONGODB_URI
-
             - name: REDIS_HOST
-              value: "redis"
-
+              value: redis
             - name: REDIS_PORT
               value: "6379"
-
             - name: DB_NAME
-              value: "nti-db"
-
+              value: nti-db
             - name: COLLECTION_NAME
-              value: "votes"
-
-          resources:
-            requests:
-              cpu: "50m"
-              memory: "128Mi"
-            limits:
-              cpu: "200m"
-              memory: "256Mi"
+              value: votes
