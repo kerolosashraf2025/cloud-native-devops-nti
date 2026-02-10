@@ -14,8 +14,8 @@ resources:
 images:
   - name: cloud-native-sample-app
     newName: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app
-    newTag: 0000000
+    newTag: f28f261
 
   - name: cloud-native-mongo-writer
     newName: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer
-    newTag: 0000000
+    newTag: f28f261
