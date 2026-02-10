@@ -1,16 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
 resources:
   - deployment.yaml
-  - service.yaml
-  - ingress.yaml
+  - mongo-writer-deployment.yaml
   - redis-deployment.yaml
   - redis-service.yaml
-  - clustersecretstore.yaml
-  - externalsecret.yaml
-  - mongo-writer-deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - mongo-secret.yaml
 
 images:
-  - name: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app
+  - name: sample-app
+    newName: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app
     newTag: latest
 
-  - name: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer
+  - name: mongo-writer
+    newName: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer
     newTag: latest

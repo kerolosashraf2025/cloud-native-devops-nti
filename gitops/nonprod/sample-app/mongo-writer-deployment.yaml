@@ -2,7 +2,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mongo-writer
-  namespace: default
+  labels:
+    app: mongo-writer
 spec:
   replicas: 1
   selector:
@@ -15,8 +16,7 @@ spec:
     spec:
       containers:
         - name: mongo-writer
-          image: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer:cf93dc6
-
+          image: mongo-writer
           env:
             - name: MONGODB_URI
               valueFrom:

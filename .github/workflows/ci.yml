@@ -1,15 +1,7 @@
-name: CI - Build Push + Update GitOps (Manual)
+name: CI - Build & Push + Update GitOps
 
 on:
   workflow_dispatch:
-    inputs:
-      environment:
-        description: "Choose environment"
-        required: true
-        default: nonprod
-        type: choice
-        options:
-          - nonprod
 
 jobs:
   build-and-push:
@@ -18,12 +10,17 @@ jobs:
     env:
       AWS_REGION: eu-west-1
       AWS_ACCOUNT_ID: 842303506852
+
       ECR_REPO_APP: cloud-native-sample-app
       ECR_REPO_WRITER: cloud-native-mongo-writer
+
+      IMAGE_TAG: latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -34,53 +31,70 @@ jobs:
 
       - name: Login to Amazon ECR
         run: |
-          aws ecr get-login-password --region $AWS_REGION | \
-          docker login --username AWS --password-stdin \
-          $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
+      # ==========================================================
+      # Build & Push Sample App
+      # ==========================================================
       - name: Build & Push Sample App Image
         run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+          APP_IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG"
 
-          docker build -t $ECR_REPO_APP:$IMAGE_TAG ./app
-          docker tag $ECR_REPO_APP:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG
-          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG
+          echo "Building Sample App Image: $APP_IMAGE"
+          docker build -t $APP_IMAGE ./app
 
+          echo "Pushing Sample App Image..."
+          docker push $APP_IMAGE
+
+      # ==========================================================
+      # Build & Push Mongo Writer
+      # ==========================================================
       - name: Build & Push Mongo Writer Image
         run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
+          WRITER_IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG"
 
-          docker build -t $ECR_REPO_WRITER:$IMAGE_TAG ./mongo-writer
-          docker tag $ECR_REPO_WRITER:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG
-          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG
+          echo "Building Mongo Writer Image: $WRITER_IMAGE"
+          docker build -t $WRITER_IMAGE ./mongo-writer
 
-      - name: Update GitOps Manifests Automatically
+          echo "Pushing Mongo Writer Image..."
+          docker push $WRITER_IMAGE
+
+      # ==========================================================
+      # Update GitOps Manifests (Kustomize)
+      # ==========================================================
+      - name: Update GitOps manifests automatically
         run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-          ENVIRONMENT=${{ github.event.inputs.environment }}
+          echo "Updating kustomization.yaml images..."
 
-          echo "Updating GitOps manifests for env: $ENVIRONMENT"
-          echo "Using tag: $IMAGE_TAG"
+          cd gitops/nonprod/sample-app
 
-          sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG|g" gitops/$ENVIRONMENT/sample-app/deployment.yaml
+          cat kustomization.yaml
 
-          sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG|g" gitops/$ENVIRONMENT/sample-app/mongo-writer-deployment.yaml
+          echo "------------------------------------------"
 
-          echo "================= Updated Images ================="
-          grep "image:" gitops/$ENVIRONMENT/sample-app/deployment.yaml
-          grep "image:" gitops/$ENVIRONMENT/sample-app/mongo-writer-deployment.yaml
+          # Update Sample App image
+          yq -i '.images[] |= (select(.name=="sample-app").newName = "'"$AWS_ACCOUNT_ID"'.dkr.ecr.'"$AWS_REGION"'.amazonaws.com/'"$ECR_REPO_APP"'")' kustomization.yaml
+          yq -i '.images[] |= (select(.name=="sample-app").newTag = "'"$IMAGE_TAG"'")' kustomization.yaml
 
-      - name: Commit & Push GitOps Updates
+          # Update Mongo Writer image
+          yq -i '.images[] |= (select(.name=="mongo-writer").newName = "'"$AWS_ACCOUNT_ID"'.dkr.ecr.'"$AWS_REGION"'.amazonaws.com/'"$ECR_REPO_WRITER"'")' kustomization.yaml
+          yq -i '.images[] |= (select(.name=="mongo-writer").newTag = "'"$IMAGE_TAG"'")' kustomization.yaml
+
+          echo "Updated file:"
+          cat kustomization.yaml
+
+      # ==========================================================
+      # Commit & Push
+      # ==========================================================
+      - name: Commit & Push GitOps updates
         run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-          ENVIRONMENT=${{ github.event.inputs.environment }}
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
 
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          git add gitops/nonprod/sample-app/kustomization.yaml
 
-          git add gitops/$ENVIRONMENT/sample-app/deployment.yaml
-          git add gitops/$ENVIRONMENT/sample-app/mongo-writer-deployment.yaml
+          git commit -m "Auto update images tags to latest" || echo "No changes to commit"
 
-          git commit -m "Update GitOps images to $IMAGE_TAG ($ENVIRONMENT)" || echo "No changes to commit"
+          git pull origin main --rebase || true
 
           git push origin main
