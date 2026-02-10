@@ -1,6 +1,5 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 resources:
   - deployment.yaml
   - service.yaml
@@ -9,10 +8,8 @@ resources:
   - redis-service.yaml
   - mongo-writer-deployment.yaml
   - externalsecret.yaml
-
 images:
   - name: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app
     newTag: REPLACE_TAG
-
   - name: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer
     newTag: REPLACE_TAG
