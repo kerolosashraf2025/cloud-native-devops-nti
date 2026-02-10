@@ -50,121 +50,188 @@ jobs:
       # ======================================================
       - name: Terraform Plan
         if: ${{ github.event.inputs.action == 'apply' }}
-        run: terraform plan -lock-timeout=5m -var-file=nonprod.tfvars
+        run: terraform plan -lock-timeout=10m -var-file=nonprod.tfvars
 
       - name: Terraform Apply
         if: ${{ github.event.inputs.action == 'apply' }}
-        run: terraform apply -lock-timeout=5m -auto-approve -var-file=nonprod.tfvars
+        run: terraform apply -lock-timeout=10m -auto-approve -var-file=nonprod.tfvars
 
       # ======================================================
-      # DESTROY (FAST ORDER)
+      # DESTROY (SAFE ORDER)
       # ======================================================
 
-      - name: Remove ECR from Terraform State (Keep ECR in AWS)
+      - name: Cleanup Kubernetes Resources (Services/Ingress) Before Destroy
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          echo "=========================================="
+          echo "Cleaning Kubernetes resources..."
+          echo "=========================================="
+
           set +e
-          echo "=========================================="
-          echo "Removing ECR repos from Terraform state..."
-          echo "=========================================="
 
-          terraform state list | grep aws_ecr_repository && echo "ECR resources found in state" || echo "No ECR resources found"
+          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
 
-          terraform state rm aws_ecr_repository.sample_app || true
-          terraform state rm aws_ecr_repository.mongo_writer || true
+          kubectl delete ingress --all -A --ignore-not-found=true
+          kubectl delete svc --all -A --ignore-not-found=true
+          kubectl delete deployment --all -A --ignore-not-found=true
 
-          echo "ECR removed from state ✅ (repos still exist in AWS)"
+          echo "Waiting 90s for AWS to cleanup LBs/ENIs..."
+          sleep 90
 
-      - name: Force Delete AWS LoadBalancers + TargetGroups (FAST)
+          echo "Kubernetes cleanup finished ✅"
+
+      - name: Force Delete AWS LoadBalancers (ONLY EKS Cluster Tagged) + TargetGroups
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          echo "=========================================="
+          echo "Deleting EKS-related LoadBalancers ONLY..."
+          echo "Region: $AWS_REGION"
+          echo "Cluster: $CLUSTER_NAME"
+          echo "=========================================="
+
           set +e
 
-          echo "=========================================="
-          echo "Deleting ALL Classic ELBs..."
-          echo "=========================================="
-          ELBS=$(aws elb describe-load-balancers --region $AWS_REGION --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null)
+          # ============================
+          # Delete ALB/NLB (ELBv2)
+          # ============================
+          LBS=$(aws elbv2 describe-load-balancers \
+            --region $AWS_REGION \
+            --query "LoadBalancers[].LoadBalancerArn" \
+            --output text 2>/dev/null)
 
-          if [ -n "$ELBS" ]; then
-            for elb in $ELBS; do
-              echo "Deleting Classic ELB: $elb"
-              aws elb delete-load-balancer --load-balancer-name "$elb" --region $AWS_REGION || true
-            done
+          if [ -z "$LBS" ]; then
+            echo "No ALB/NLB found in region ✅"
           else
-            echo "No Classic ELBs found ✅"
-          fi
-
-          echo "=========================================="
-          echo "Deleting ALL ALB/NLB..."
-          echo "=========================================="
-          LBS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null)
-
-          if [ -n "$LBS" ]; then
             for lb in $LBS; do
-              echo "Deleting LB ARN: $lb"
-              aws elbv2 delete-load-balancer --load-balancer-arn "$lb" --region $AWS_REGION || true
+              TAG=$(aws elbv2 describe-tags \
+                --region $AWS_REGION \
+                --resource-arns "$lb" \
+                --query "TagDescriptions[].Tags[?Key=='kubernetes.io/cluster/$CLUSTER_NAME'].Value" \
+                --output text 2>/dev/null)
+
+              if [ "$TAG" = "owned" ] || [ "$TAG" = "shared" ]; then
+                echo "Deleting LB (EKS tagged): $lb"
+                aws elbv2 delete-load-balancer --load-balancer-arn "$lb" --region $AWS_REGION || true
+              else
+                echo "Skipping LB (not related to cluster): $lb"
+              fi
             done
-          else
-            echo "No ALB/NLB found ✅"
           fi
 
+          # ============================
+          # Wait for LB deletion
+          # ============================
           echo "=========================================="
-          echo "Waiting 30s for LB cleanup..."
+          echo "Waiting for LoadBalancers to terminate..."
           echo "=========================================="
-          sleep 30
 
-          echo "=========================================="
-          echo "Deleting ALL Target Groups..."
-          echo "=========================================="
-          TGS=$(aws elbv2 describe-target-groups --region $AWS_REGION --query 'TargetGroups[].TargetGroupArn' --output text 2>/dev/null)
+          for i in {1..25}; do
+            REMAINING=$(aws elbv2 describe-load-balancers \
+              --region $AWS_REGION \
+              --query "LoadBalancers[].LoadBalancerArn" \
+              --output text 2>/dev/null)
 
-          if [ -n "$TGS" ]; then
-            for tg in $TGS; do
-              echo "Deleting TargetGroup: $tg"
-              aws elbv2 delete-target-group --target-group-arn "$tg" --region $AWS_REGION || true
-            done
-          else
+            if [ -z "$REMAINING" ]; then
+              echo "All LBs deleted ✅"
+              break
+            fi
+
+            echo "Still waiting... attempt $i/25"
+            sleep 15
+          done
+
+          # ============================
+          # Delete Target Groups
+          # ============================
+          echo "=========================================="
+          echo "Deleting Target Groups related to EKS..."
+          echo "=========================================="
+
+          TGS=$(aws elbv2 describe-target-groups \
+            --region $AWS_REGION \
+            --query "TargetGroups[].TargetGroupArn" \
+            --output text 2>/dev/null)
+
+          if [ -z "$TGS" ]; then
             echo "No Target Groups found ✅"
+          else
+            for tg in $TGS; do
+              TG_TAG=$(aws elbv2 describe-tags \
+                --region $AWS_REGION \
+                --resource-arns "$tg" \
+                --query "TagDescriptions[].Tags[?Key=='kubernetes.io/cluster/$CLUSTER_NAME'].Value" \
+                --output text 2>/dev/null)
+
+              if [ "$TG_TAG" = "owned" ] || [ "$TG_TAG" = "shared" ]; then
+                echo "Deleting TargetGroup (EKS tagged): $tg"
+                aws elbv2 delete-target-group --target-group-arn "$tg" --region $AWS_REGION || true
+              else
+                echo "Skipping TargetGroup (not related to cluster): $tg"
+              fi
+            done
           fi
 
           echo "LB + TargetGroups cleanup finished ✅"
 
-      - name: Terraform Destroy EKS (will delete EC2 Nodes)
+      - name: Terraform Destroy EKS NodeGroups First
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
+          echo "=========================================="
+          echo "Destroying EKS NodeGroups first..."
+          echo "=========================================="
+
           set +e
+
+          # Attempt common NodeGroup module names (in case of different state paths)
+          terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.eks.module.eks_managed_node_group || true
+          terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.eks.module.eks_managed_node_groups || true
+
+          echo "NodeGroups destroy attempted ✅"
+
+      - name: Terraform Destroy EKS Cluster
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
           echo "=========================================="
-          echo "Destroying EKS first..."
+          echo "Destroying EKS Cluster..."
           echo "=========================================="
-          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars -target=module.eks
-          echo "EKS Destroy finished ✅"
+
+          set -e
+          terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.eks
+
+          echo "EKS Cluster destroyed ✅"
 
       - name: Terraform Destroy IAM
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          set +e
           echo "=========================================="
           echo "Destroying IAM..."
           echo "=========================================="
-          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars -target=module.iam
-          echo "IAM Destroy finished ✅"
 
-      - name: Terraform Destroy Networking (VPC)
+          set -e
+          terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.iam
+
+          echo "IAM destroyed ✅"
+
+      - name: Terraform Destroy Networking (VPC LAST)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          set +e
           echo "=========================================="
           echo "Destroying Networking (VPC)..."
           echo "=========================================="
-          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars -target=module.networking
-          echo "Networking Destroy finished ✅"
 
-      - name: Terraform Destroy Remaining Resources (ignore failures)
+          set -e
+          terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars -target=module.networking
+
+          echo "Networking destroyed ✅"
+
+      - name: Terraform Destroy Remaining Resources
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          set +e
           echo "=========================================="
           echo "Destroying remaining resources..."
           echo "=========================================="
-          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars || true
+
+          set -e
+          terraform destroy -lock-timeout=20m -auto-approve -var-file=nonprod.tfvars
+
           echo "Final Destroy finished ✅"
