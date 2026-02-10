@@ -25,8 +25,6 @@ jobs:
     env:
       AWS_REGION: eu-west-1
       CLUSTER_NAME: nti-nonprod-eks
-      ECR_REPO_NAME_APP: cloud-native-sample-app
-      ECR_REPO_NAME_WRITER: cloud-native-mongo-writer
 
     steps:
       - name: Checkout repository
@@ -48,45 +46,8 @@ jobs:
         run: terraform init
 
       # ======================================================
-      # APPLY FLOW
+      # APPLY
       # ======================================================
-      - name: Auto Import ECR Repos if exist
-        if: ${{ github.event.inputs.action == 'apply' }}
-        run: |
-          set -e
-
-          echo "=========================================="
-          echo "Checking ECR repos in AWS..."
-          echo "=========================================="
-
-          check_and_import_repo () {
-            REPO_NAME=$1
-            TF_RESOURCE=$2
-
-            echo "------------------------------------------"
-            echo "Repo: $REPO_NAME"
-            echo "Terraform Resource: $TF_RESOURCE"
-            echo "------------------------------------------"
-
-            if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-              echo "Repo exists in AWS: $REPO_NAME"
-            else
-              echo "Repo does not exist in AWS. Terraform will create it."
-              return
-            fi
-
-            if terraform state list | grep -q "$TF_RESOURCE"; then
-              echo "Repo already exists in Terraform state: $TF_RESOURCE"
-            else
-              echo "Repo missing in state -> importing..."
-              terraform import "$TF_RESOURCE" "$REPO_NAME"
-              echo "Import completed."
-            fi
-          }
-
-          check_and_import_repo "$ECR_REPO_NAME_APP" "aws_ecr_repository.sample_app"
-          check_and_import_repo "$ECR_REPO_NAME_WRITER" "aws_ecr_repository.mongo_writer"
-
       - name: Terraform Plan
         if: ${{ github.event.inputs.action == 'apply' }}
         run: terraform plan -lock-timeout=5m -var-file=nonprod.tfvars
@@ -96,104 +57,31 @@ jobs:
         run: terraform apply -lock-timeout=5m -auto-approve -var-file=nonprod.tfvars
 
       # ======================================================
-      # DESTROY FLOW (FULL CLEANUP)
+      # DESTROY (FAST ORDER)
       # ======================================================
-      - name: Install kubectl (if missing)
+
+      - name: Remove ECR from Terraform State (Keep ECR in AWS)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
-          set -e
-          if ! command -v kubectl >/dev/null 2>&1; then
-            echo "Installing kubectl..."
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
-          fi
-          kubectl version --client
+          set +e
+          echo "=========================================="
+          echo "Removing ECR repos from Terraform state..."
+          echo "=========================================="
 
-      - name: Install Helm (if missing)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        run: |
-          set -e
-          if ! command -v helm >/dev/null 2>&1; then
-            echo "Installing Helm..."
-            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash
-          fi
-          helm version
+          terraform state list | grep aws_ecr_repository && echo "ECR resources found in state" || echo "No ECR resources found"
 
-      - name: Full Cleanup Kubernetes Resources (Safe Order)
+          terraform state rm aws_ecr_repository.sample_app || true
+          terraform state rm aws_ecr_repository.mongo_writer || true
+
+          echo "ECR removed from state ✅ (repos still exist in AWS)"
+
+      - name: Force Delete AWS LoadBalancers + TargetGroups (FAST)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           set +e
 
           echo "=========================================="
-          echo "Updating kubeconfig..."
-          echo "=========================================="
-          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
-
-          echo "=========================================="
-          echo "Current Services (before cleanup)"
-          echo "=========================================="
-          kubectl get svc -A || true
-
-          echo "=========================================="
-          echo "Deleting ExternalSecrets + ClusterSecretStores FIRST..."
-          echo "=========================================="
-          kubectl delete externalsecret --all -A --ignore-not-found=true || true
-          kubectl delete clustersecretstore --all --ignore-not-found=true || true
-
-          echo "=========================================="
-          echo "Deleting ArgoCD Applications (CRDs objects)..."
-          echo "=========================================="
-          kubectl delete applications.argoproj.io --all -n argocd --ignore-not-found=true || true
-
-          echo "=========================================="
-          echo "Deleting ALL Ingress resources..."
-          echo "=========================================="
-          kubectl delete ingress --all -A --ignore-not-found=true || true
-
-          echo "=========================================="
-          echo "Deleting ALL Services of type LoadBalancer..."
-          echo "=========================================="
-          kubectl get svc -A --no-headers 2>/dev/null | awk '{print $1" "$2" "$4}' | while read ns name type; do
-            if [ "$type" = "LoadBalancer" ]; then
-              echo "Deleting LoadBalancer service $name in namespace $ns ..."
-              kubectl delete svc "$name" -n "$ns" --ignore-not-found=true || true
-            fi
-          done || true
-
-          echo "=========================================="
-          echo "Uninstalling Helm releases..."
-          echo "=========================================="
-          helm uninstall ingress-nginx -n ingress-nginx || true
-          helm uninstall argocd -n argocd || true
-          helm uninstall datadog -n datadog || true
-          helm uninstall external-secrets -n external-secrets || true
-
-          echo "=========================================="
-          echo "Deleting namespaces (force cleanup)..."
-          echo "=========================================="
-          kubectl delete ns ingress-nginx --ignore-not-found=true || true
-          kubectl delete ns argocd --ignore-not-found=true || true
-          kubectl delete ns datadog --ignore-not-found=true || true
-          kubectl delete ns external-secrets --ignore-not-found=true || true
-
-          echo "=========================================="
-          echo "Waiting 180 seconds for Kubernetes cleanup..."
-          echo "=========================================="
-          sleep 180
-
-          echo "=========================================="
-          echo "Checking if any LoadBalancer service still exists..."
-          echo "=========================================="
-          kubectl get svc -A | grep LoadBalancer || echo "No LoadBalancer services found ✅"
-
-      - name: Cleanup AWS Load Balancers (Force Delete)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        run: |
-          set +e
-
-          echo "=========================================="
-          echo "Searching for Classic ELBs..."
+          echo "Deleting ALL Classic ELBs..."
           echo "=========================================="
           ELBS=$(aws elb describe-load-balancers --region $AWS_REGION --query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null)
 
@@ -207,7 +95,7 @@ jobs:
           fi
 
           echo "=========================================="
-          echo "Searching for ALB/NLB..."
+          echo "Deleting ALL ALB/NLB..."
           echo "=========================================="
           LBS=$(aws elbv2 describe-load-balancers --region $AWS_REGION --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null)
 
@@ -221,12 +109,12 @@ jobs:
           fi
 
           echo "=========================================="
-          echo "Waiting 120 seconds for TargetGroups cleanup..."
+          echo "Waiting 30s for LB cleanup..."
           echo "=========================================="
-          sleep 120
+          sleep 30
 
           echo "=========================================="
-          echo "Deleting leftover Target Groups..."
+          echo "Deleting ALL Target Groups..."
           echo "=========================================="
           TGS=$(aws elbv2 describe-target-groups --region $AWS_REGION --query 'TargetGroups[].TargetGroupArn' --output text 2>/dev/null)
 
@@ -239,38 +127,44 @@ jobs:
             echo "No Target Groups found ✅"
           fi
 
-          echo "AWS LoadBalancer cleanup finished ✅"
+          echo "LB + TargetGroups cleanup finished ✅"
 
-      - name: Terraform Destroy (Full - Keep ECR)
-        if: ${{ github.event.inputs.action == 'destroy' }}
-        run: |
-          set +e
-
-          echo "=========================================="
-          echo "Destroy everything EXCEPT ECR repos..."
-          echo "=========================================="
-
-          terraform destroy \
-            -lock-timeout=15m \
-            -auto-approve \
-            -var-file=nonprod.tfvars \
-            -target=module.eks \
-            -target=module.iam \
-            -target=module.networking
-
-          echo "=========================================="
-          echo "Destroy Completed ✅"
-          echo "ECR repos kept بسبب prevent_destroy=true"
-          echo "=========================================="
-
-      - name: Force Remove Terraform Lock (if stuck)
+      - name: Terraform Destroy EKS (will delete EC2 Nodes)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           set +e
           echo "=========================================="
-          echo "Trying to force unlock if stuck..."
+          echo "Destroying EKS first..."
           echo "=========================================="
+          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars -target=module.eks
+          echo "EKS Destroy finished ✅"
 
-          terraform force-unlock -force abe3556a-ff9e-5094-2a20-3f48e3f2b812 || true
+      - name: Terraform Destroy IAM
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          set +e
+          echo "=========================================="
+          echo "Destroying IAM..."
+          echo "=========================================="
+          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars -target=module.iam
+          echo "IAM Destroy finished ✅"
 
-          echo "Lock cleanup finished ✅"
+      - name: Terraform Destroy Networking (VPC)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          set +e
+          echo "=========================================="
+          echo "Destroying Networking (VPC)..."
+          echo "=========================================="
+          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars -target=module.networking
+          echo "Networking Destroy finished ✅"
+
+      - name: Terraform Destroy Remaining Resources (ignore failures)
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: |
+          set +e
+          echo "=========================================="
+          echo "Destroying remaining resources..."
+          echo "=========================================="
+          terraform destroy -lock-timeout=15m -auto-approve -var-file=nonprod.tfvars || true
+          echo "Final Destroy finished ✅"
