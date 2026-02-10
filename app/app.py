@@ -32,11 +32,18 @@ def hello():
     vote = None
 
     if request.method == 'POST':
-        redis = get_redis()
-        vote = request.form['vote']
-        app.logger.info('Received vote for %s', vote)
-        data = json.dumps({'voter_id': voter_id, 'vote': vote})
-        redis.rpush('votes', data)
+        try:
+            redis = get_redis()
+            vote = request.form['vote']
+            app.logger.info('Received vote for %s', vote)
+
+            data = json.dumps({'voter_id': voter_id, 'vote': vote})
+            redis.rpush('votes', data)
+
+            app.logger.info("✅ Vote pushed successfully into Redis queue: votes")
+
+        except Exception as e:
+            app.logger.error(f"❌ Redis push failed: {str(e)}")
 
     resp = make_response(render_template(
         'index.html',
@@ -47,6 +54,16 @@ def hello():
     ))
     resp.set_cookie('voter_id', voter_id)
     return resp
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    try:
+        redis = get_redis()
+        redis.ping()
+        return "OK", 200
+    except Exception as e:
+        return f"Redis not reachable: {str(e)}", 500
 
 
 if __name__ == "__main__":
