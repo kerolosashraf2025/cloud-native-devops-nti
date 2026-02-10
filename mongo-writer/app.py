@@ -3,6 +3,7 @@ import time
 import json
 from pymongo import MongoClient
 from redis import Redis
+from redis.exceptions import TimeoutError
 
 MONGODB_URI = os.getenv("MONGODB_URI")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
@@ -28,15 +29,22 @@ while True:
     try:
         item = redis_client.blpop("votes", timeout=5)
 
-        if item:
-            _, data = item
-            vote_data = json.loads(data.decode("utf-8"))
+        if not item:
+            # No votes received
+            continue
 
-            vote_data["source"] = "voting-app"
-            vote_data["createdAt"] = time.time()
+        _, data = item
+        vote_data = json.loads(data.decode("utf-8"))
 
-            collection.insert_one(vote_data)
-            print(f"Inserted vote: {vote_data}")
+        vote_data["source"] = "voting-app"
+        vote_data["createdAt"] = time.time()
+
+        collection.insert_one(vote_data)
+
+        print(f"Inserted vote into MongoDB: {vote_data}")
+
+    except TimeoutError:
+        continue
 
     except Exception as e:
         print(f"Error: {str(e)}")
