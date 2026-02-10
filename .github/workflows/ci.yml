@@ -68,6 +68,7 @@ jobs:
 
           cd gitops/nonprod/sample-app
 
+          echo "Before update:"
           cat kustomization.yaml
 
           echo "------------------------------------------"
@@ -80,7 +81,7 @@ jobs:
           yq -i '.images[] |= (select(.name=="mongo-writer").newName = "'"$AWS_ACCOUNT_ID"'.dkr.ecr.'"$AWS_REGION"'.amazonaws.com/'"$ECR_REPO_WRITER"'")' kustomization.yaml
           yq -i '.images[] |= (select(.name=="mongo-writer").newTag = "'"$IMAGE_TAG"'")' kustomization.yaml
 
-          echo "Updated file:"
+          echo "After update:"
           cat kustomization.yaml
 
       # ==========================================================
