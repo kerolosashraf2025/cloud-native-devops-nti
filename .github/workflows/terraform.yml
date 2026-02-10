@@ -116,7 +116,7 @@ jobs:
           fi
           helm version
 
-      - name: Full Cleanup Kubernetes Resources (Helm Uninstall + Delete LB Services)
+      - name: Full Cleanup Kubernetes Resources (Safe Order)
         if: ${{ github.event.inputs.action == 'destroy' }}
         run: |
           echo "=========================================="
@@ -125,18 +125,24 @@ jobs:
           aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME || true
 
           echo "=========================================="
-          echo "Current Services (before cleanup)"
+          echo "Deleting ExternalSecrets + ClusterSecretStores FIRST..."
           echo "=========================================="
-          kubectl get svc -A || true
+          kubectl delete externalsecret --all -A --ignore-not-found=true || true
+          kubectl delete clustersecretstore --all --ignore-not-found=true || true
 
           echo "=========================================="
-          echo "Uninstalling Helm releases (if exist)..."
+          echo "Force removing finalizers (if stuck)..."
           echo "=========================================="
 
-          helm uninstall ingress-nginx -n ingress-nginx || true
-          helm uninstall argocd -n argocd || true
-          helm uninstall datadog -n datadog || true
-          helm uninstall external-secrets -n external-secrets || true
+          for cs in $(kubectl get clustersecretstore -o name 2>/dev/null); do
+            echo "Removing finalizers from $cs"
+            kubectl patch $cs -p '{"metadata":{"finalizers":[]}}' --type=merge || true
+          done
+
+          for es in $(kubectl get externalsecret -A -o name 2>/dev/null); do
+            echo "Removing finalizers from $es"
+            kubectl patch $es -p '{"metadata":{"finalizers":[]}}' --type=merge || true
+          done
 
           echo "=========================================="
           echo "Deleting ArgoCD Applications (CRDs objects)"
@@ -159,13 +165,15 @@ jobs:
           done || true
 
           echo "=========================================="
-          echo "Deleting ExternalSecrets resources..."
+          echo "Uninstalling Helm releases (if exist)..."
           echo "=========================================="
-          kubectl delete externalsecret --all -A --ignore-not-found=true || true
-          kubectl delete clustersecretstore --all --ignore-not-found=true || true
+          helm uninstall datadog -n datadog || true
+          helm uninstall ingress-nginx -n ingress-nginx || true
+          helm uninstall argocd -n argocd || true
+          helm uninstall external-secrets -n external-secrets || true
 
           echo "=========================================="
-          echo "Deleting Namespaces (force cleanup)"
+          echo "Deleting Namespaces..."
           echo "=========================================="
           kubectl delete ns ingress-nginx --ignore-not-found=true || true
           kubectl delete ns argocd --ignore-not-found=true || true
