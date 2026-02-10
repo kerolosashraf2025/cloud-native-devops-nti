@@ -1,13 +1,15 @@
-name: CI - Build Push + Update GitOps
+name: CI - Build Push + Update GitOps (Manual)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - app/**
-      - mongo-writer/**
-      - gitops/**
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Choose environment"
+        required: true
+        default: nonprod
+        type: choice
+        options:
+          - nonprod
 
 jobs:
   build-and-push:
@@ -39,6 +41,7 @@ jobs:
       - name: Build & Push Sample App Image
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
+
           docker build -t $ECR_REPO_APP:$IMAGE_TAG ./app
           docker tag $ECR_REPO_APP:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG
           docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG
@@ -46,6 +49,7 @@ jobs:
       - name: Build & Push Mongo Writer Image
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
+
           docker build -t $ECR_REPO_WRITER:$IMAGE_TAG ./mongo-writer
           docker tag $ECR_REPO_WRITER:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG
           docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG
@@ -53,26 +57,30 @@ jobs:
       - name: Update GitOps Manifests Automatically
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
+          ENVIRONMENT=${{ github.event.inputs.environment }}
 
-          echo "Updating GitOps manifests to tag: $IMAGE_TAG"
+          echo "Updating GitOps manifests for env: $ENVIRONMENT"
+          echo "Using tag: $IMAGE_TAG"
 
-          sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG|g" gitops/nonprod/sample-app/deployment.yaml
+          sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$IMAGE_TAG|g" gitops/$ENVIRONMENT/sample-app/deployment.yaml
 
-          sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG|g" gitops/nonprod/sample-app/mongo-writer-deployment.yaml
+          sed -i "s|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:.*|image: $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$IMAGE_TAG|g" gitops/$ENVIRONMENT/sample-app/mongo-writer-deployment.yaml
 
-          cat gitops/nonprod/sample-app/deployment.yaml | grep image
-          cat gitops/nonprod/sample-app/mongo-writer-deployment.yaml | grep image
+          echo "================= Updated Images ================="
+          grep "image:" gitops/$ENVIRONMENT/sample-app/deployment.yaml
+          grep "image:" gitops/$ENVIRONMENT/sample-app/mongo-writer-deployment.yaml
 
       - name: Commit & Push GitOps Updates
         run: |
           IMAGE_TAG=${GITHUB_SHA::7}
+          ENVIRONMENT=${{ github.event.inputs.environment }}
 
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add gitops/nonprod/sample-app/deployment.yaml
-          git add gitops/nonprod/sample-app/mongo-writer-deployment.yaml
+          git add gitops/$ENVIRONMENT/sample-app/deployment.yaml
+          git add gitops/$ENVIRONMENT/sample-app/mongo-writer-deployment.yaml
 
-          git commit -m "Update images to $IMAGE_TAG" || echo "No changes to commit"
+          git commit -m "Update GitOps images to $IMAGE_TAG ($ENVIRONMENT)" || echo "No changes to commit"
 
           git push origin main
