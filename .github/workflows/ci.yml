@@ -1,27 +1,22 @@
-name: CI - Build Push + Update GitOps
+name: CI - Build & Push + Update GitOps
 
 on:
   workflow_dispatch:
 
 jobs:
   build-and-push:
-    name: build-and-push
     runs-on: self-hosted
 
     env:
       AWS_REGION: eu-west-1
       AWS_ACCOUNT_ID: 842303506852
 
-      ECR_REPO_APP: cloud-native-sample-app
-      ECR_REPO_WRITER: cloud-native-mongo-writer
-
-      GITOPS_PATH: gitops/nonprod/sample-app/kustomization.yaml
+      ECR_REPO_APP: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-sample-app
+      ECR_REPO_WRITER: 842303506852.dkr.ecr.eu-west-1.amazonaws.com/cloud-native-mongo-writer
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -32,7 +27,9 @@ jobs:
 
       - name: Login to Amazon ECR
         run: |
-          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+          aws ecr get-login-password --region $AWS_REGION \
+            | docker login --username AWS --password-stdin \
+            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
       - name: Set IMAGE TAG
         id: tag
@@ -41,45 +38,44 @@ jobs:
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "Using TAG=$TAG"
 
-      # ==========================================================
-      # Build & Push Sample App
-      # ==========================================================
+      # ======================================================
+      # Build & Push Voting App
+      # ======================================================
       - name: Build & Push Sample App Image
         run: |
-          docker build -t $ECR_REPO_APP:$TAG ./apps/sample-app
-          docker tag $ECR_REPO_APP:$TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$TAG
-          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_APP:$TAG
+          docker build -t $ECR_REPO_APP:$TAG ./app
+          docker push $ECR_REPO_APP:$TAG
 
-      # ==========================================================
+      # ======================================================
       # Build & Push Mongo Writer
-      # ==========================================================
+      # ======================================================
       - name: Build & Push Mongo Writer Image
         run: |
-          docker build -t $ECR_REPO_WRITER:$TAG ./apps/mongo-writer
-          docker tag $ECR_REPO_WRITER:$TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$TAG
-          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_WRITER:$TAG
+          docker build -t $ECR_REPO_WRITER:$TAG ./mongo-writer
+          docker push $ECR_REPO_WRITER:$TAG
 
-      # ==========================================================
-      # Update GitOps Manifests Automatically
-      # ==========================================================
+      # ======================================================
+      # Update GitOps manifests with new TAG
+      # ======================================================
       - name: Update GitOps Images Tags Automatically
         run: |
-          echo "Updating GitOps file: $GITOPS_PATH"
+          echo "Updating GitOps manifests with TAG=$TAG"
 
-          sed -i "s/newTag: REPLACE_TAG/newTag: $TAG/g" $GITOPS_PATH
+          sed -i "s|image: .*cloud-native-sample-app:.*|image: $ECR_REPO_APP:$TAG|g" gitops/nonprod/sample-app/deployment.yaml
+          sed -i "s|image: .*cloud-native-mongo-writer:.*|image: $ECR_REPO_WRITER:$TAG|g" gitops/nonprod/sample-app/mongo-writer-deployment.yaml
 
-          echo "GitOps file updated:"
-          cat $GITOPS_PATH
+          echo "Done updating GitOps files."
 
-      # ==========================================================
-      # Commit & Push GitOps Updates
-      # ==========================================================
+      # ======================================================
+      # Commit & Push GitOps updates
+      # ======================================================
       - name: Commit & Push GitOps Updates
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add $GITOPS_PATH
+          git add gitops/nonprod/sample-app/deployment.yaml
+          git add gitops/nonprod/sample-app/mongo-writer-deployment.yaml
 
           git commit -m "Auto update images tags to $TAG" || echo "No changes to commit"
 
