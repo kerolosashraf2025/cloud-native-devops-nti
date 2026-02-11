@@ -137,7 +137,13 @@ jobs:
         run: kubectl get pods -n external-secrets
 
       # ==========================
-      # OUTPUTS: ArgoCD UI + Sample App URL
+      # Install SonarQube
+      # ==========================
+      - name: Install SonarQube
+        run: bash bootstrap/helm/sonarqube/install-sonarqube.sh
+
+      # ==========================
+      # OUTPUTS: ArgoCD UI + Sample App URL + SonarQube URL
       # ==========================
       - name: Show ArgoCD UI Access Info
         run: |
@@ -173,6 +179,22 @@ jobs:
             kubectl get ingress -n default
           else
             echo "Sample App URL: http://$APP_LB"
+          fi
+
+      - name: Show SonarQube URL
+        run: |
+          echo "========================================="
+          echo "SONARQUBE ACCESS"
+          echo "========================================="
+
+          SONAR_LB=$(kubectl get svc sonarqube-sonarqube -n sonarqube -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
+          if [ -z "$SONAR_LB" ]; then
+            echo "❌ SonarQube service does not have a LoadBalancer hostname yet."
+            kubectl get svc -n sonarqube
+          else
+            echo "SonarQube URL: http://$SONAR_LB"
+            echo "Default login: admin / admin"
           fi
 
       - name: Show ArgoCD Applications
