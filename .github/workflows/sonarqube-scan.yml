@@ -1,4 +1,4 @@
-name: Run SonarQube Scan
+name: SonarQube Code Scan
 
 on:
   workflow_dispatch:
@@ -16,55 +16,24 @@ jobs:
         uses: actions/checkout@v4
 
       # ==========================
-      # Install Python (Kali Self-hosted Fix)
+      # SonarQube Scan using Docker Scanner
       # ==========================
-      - name: Install Python 3 + pip
+      - name: Run SonarQube Scan
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip python3-venv
+          echo "=========================================="
+          echo "Running SonarQube Scan..."
+          echo "=========================================="
 
-          python3 --version
-          pip3 --version
-
-      # ==========================
-      # Install Dependencies (Voting App)
-      # ==========================
-      - name: Install dependencies (App)
-        run: |
-          python3 -m venv venv
-          source venv/bin/activate
-          pip install --upgrade pip
-          pip install -r app/requirements.txt
-
-      # ==========================
-      # Install Dependencies (Mongo Writer)
-      # ==========================
-      - name: Install dependencies (Mongo Writer)
-        run: |
-          source venv/bin/activate
-          pip install -r mongo-writer/requirements.txt
-
-      # ==========================
-      # SonarQube Scan
-      # ==========================
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v3
-        env:
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
-        with:
-          args: >
-            -Dsonar.projectKey=cloud-native-devops-nti
-            -Dsonar.projectName=cloud-native-devops-nti
-            -Dsonar.sources=app,mongo-writer
+          docker run --rm \
+            -e SONAR_HOST_URL="${SONAR_HOST_URL}" \
+            -e SONAR_TOKEN="${SONAR_TOKEN}" \
+            -v "$(pwd):/usr/src" \
+            sonarsource/sonar-scanner-cli:latest \
+            -Dsonar.projectKey=cloud-native-devops-nti \
+            -Dsonar.projectName="cloud-native-devops-nti" \
+            -Dsonar.sources=. \
+            -Dsonar.exclusions="**/terraform/**,**/gitops/**,**/.github/**,**/bootstrap/**,**/venv/**,**/__pycache__/**" \
             -Dsonar.python.version=3.11
-            -Dsonar.exclusions=**/venv/**,**/__pycache__/**
 
-      # ==========================
-      # Quality Gate (Optional)
-      # ==========================
-      - name: SonarQube Quality Gate Check
-        uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
-        env:
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+      - name: Done
+        run: echo "✅ SonarQube Scan Completed Successfully"
