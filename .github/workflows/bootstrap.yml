@@ -137,7 +137,7 @@ jobs:
         run: kubectl get pods -n external-secrets
 
       # ==========================
-      # Install SonarQube
+      # Install SonarQube (Community Edition)
       # ==========================
       - name: Install SonarQube
         run: |
@@ -150,6 +150,7 @@ jobs:
 
           helm upgrade --install sonarqube sonarqube/sonarqube \
             --namespace sonarqube \
+            --set community.enabled=true \
             --set service.type=LoadBalancer \
             --set monitoringPasscode="nti-sonarqube-passcode"
 
@@ -169,6 +170,7 @@ jobs:
 
           if [ -z "$ARGOCD_LB" ]; then
             echo "❌ ArgoCD service does not have a LoadBalancer hostname."
+            echo "Check service type:"
             kubectl get svc -n argocd
           else
             echo "ArgoCD URL: http://$ARGOCD_LB"
@@ -188,6 +190,7 @@ jobs:
 
           if [ -z "$APP_LB" ]; then
             echo "❌ Sample App ingress does not have a LoadBalancer hostname yet."
+            echo "Check ingress:"
             kubectl get ingress -n default
           else
             echo "Sample App URL: http://$APP_LB"
@@ -202,7 +205,7 @@ jobs:
           SONAR_LB=$(kubectl get svc sonarqube-sonarqube -n sonarqube -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
           if [ -z "$SONAR_LB" ]; then
-            echo "❌ SonarQube LoadBalancer not ready yet."
+            echo "❌ SonarQube service does not have a LoadBalancer hostname yet."
             kubectl get svc -n sonarqube
           else
             echo "SonarQube URL: http://$SONAR_LB"
