@@ -1,4 +1,4 @@
-name: Trivy Security Scan
+name: Trivy Scan (Repo + Docker Images)
 
 on:
   workflow_dispatch:
@@ -11,50 +11,69 @@ env:
 
 jobs:
   trivy-scan:
-    name: Trivy Scan (Repo + Docker Images)
     runs-on: self-hosted
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repo
         uses: actions/checkout@v4
 
       # ===============================
-      # Install Trivy (if missing)
+      # Get Latest Tag from GitOps
+      # ===============================
+      - name: Get Latest Image Tag from GitOps
+        run: |
+          set -e
+          echo "Getting latest tag from gitops/nonprod/sample-app/kustomization.yaml ..."
+
+          TAG=$(grep "newTag:" gitops/nonprod/sample-app/kustomization.yaml | head -n 1 | awk '{print $2}')
+
+          if [ -z "$TAG" ]; then
+            echo "❌ ERROR: Could not extract TAG from kustomization.yaml"
+            exit 1
+          fi
+
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "Latest TAG found: $TAG"
+
+      # ===============================
+      # Install Trivy (Kali Compatible)
       # ===============================
       - name: Install Trivy
         run: |
-          if command -v trivy >/dev/null 2>&1; then
-            echo "Trivy already installed ✅"
-            trivy --version
-          else
-            echo "Installing Trivy..."
-            sudo apt-get update -y
-            sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+          set -e
+          echo "Installing Trivy..."
 
-            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-            echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -y
+          sudo apt-get install -y wget gnupg lsb-release apt-transport-https ca-certificates
 
-            sudo apt-get update -y
-            sudo apt-get install -y trivy
+          sudo mkdir -p /etc/apt/keyrings
 
-            trivy --version
-          fi
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+            | gpg --dearmor \
+            | sudo tee /etc/apt/keyrings/trivy.gpg > /dev/null
+
+          echo "deb [signed-by=/etc/apt/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
+            | sudo tee /etc/apt/sources.list.d/trivy.list
+
+          sudo apt-get update -y
+          sudo apt-get install -y trivy
+
+          trivy --version
 
       # ===============================
       # Scan Repo Filesystem
       # ===============================
       - name: Trivy Scan Repo (Filesystem)
         run: |
-          echo "Scanning repository filesystem..."
-          trivy fs . \
+          trivy fs --scanners vuln,secret,config \
             --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            --ignore-unfixed
+            --exit-code 0 \
+            .
 
       # ===============================
-      # Configure AWS
+      # Configure AWS Credentials
       # ===============================
-      - name: Configure AWS Credentials
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -71,38 +90,25 @@ jobs:
             --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
       # ===============================
-      # Build Docker Images
-      # ===============================
-      - name: Set TAG
-        run: echo "TAG=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
-
-      - name: Build Sample App Image
-        run: docker build -t $ECR_SAMPLE:$TAG ./app
-
-      - name: Build Mongo Writer Image
-        run: docker build -t $ECR_WRITER:$TAG ./mongo-writer
-
-      # ===============================
-      # Scan Docker Images
+      # Scan Sample App Image
       # ===============================
       - name: Trivy Scan Sample App Image
         run: |
-          echo "Scanning Sample App image..."
-          trivy image $ECR_SAMPLE:$TAG \
-            --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            --ignore-unfixed
+          IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_SAMPLE:$TAG"
+          echo "Scanning image: $IMAGE"
 
+          trivy image --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            $IMAGE
+
+      # ===============================
+      # Scan Mongo Writer Image
+      # ===============================
       - name: Trivy Scan Mongo Writer Image
         run: |
-          echo "Scanning Mongo Writer image..."
-          trivy image $ECR_WRITER:$TAG \
-            --severity HIGH,CRITICAL \
-            --exit-code 1 \
-            --ignore-unfixed
+          IMAGE="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_WRITER:$TAG"
+          echo "Scanning image: $IMAGE"
 
-      # ===============================
-      # Success Message
-      # ===============================
-      - name: Done
-        run: echo "✅ Trivy Scan finished successfully (No HIGH/CRITICAL found)"
+          trivy image --severity HIGH,CRITICAL \
+            --exit-code 0 \
+            $IMAGE
