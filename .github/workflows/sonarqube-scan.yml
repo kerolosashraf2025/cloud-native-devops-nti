@@ -1,47 +1,70 @@
-name: SonarQube Code Scan
+name: Run SonarQube Scan
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   sonarqube-scan:
-    name: Run SonarQube Scan
     runs-on: self-hosted
+
+    env:
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      # ==========================
+      # Install Python (Kali Self-hosted Fix)
+      # ==========================
+      - name: Install Python 3 + pip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip python3-venv
 
+          python3 --version
+          pip3 --version
+
+      # ==========================
+      # Install Dependencies (Voting App)
+      # ==========================
       - name: Install dependencies (App)
         run: |
+          python3 -m venv venv
+          source venv/bin/activate
           pip install --upgrade pip
           pip install -r app/requirements.txt
 
+      # ==========================
+      # Install Dependencies (Mongo Writer)
+      # ==========================
       - name: Install dependencies (Mongo Writer)
         run: |
+          source venv/bin/activate
           pip install -r mongo-writer/requirements.txt
 
+      # ==========================
+      # SonarQube Scan
+      # ==========================
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v2
+        uses: SonarSource/sonarqube-scan-action@v3
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
         with:
           args: >
             -Dsonar.projectKey=cloud-native-devops-nti
             -Dsonar.projectName=cloud-native-devops-nti
             -Dsonar.sources=app,mongo-writer
-            -Dsonar.language=py
             -Dsonar.python.version=3.11
-            -Dsonar.sourceEncoding=UTF-8
-            -Dsonar.exclusions=**/__pycache__/**,**/*.css,**/*.html,**/*.js,**/static/**,**/templates/**
+            -Dsonar.exclusions=**/venv/**,**/__pycache__/**
+
+      # ==========================
+      # Quality Gate (Optional)
+      # ==========================
+      - name: SonarQube Quality Gate Check
+        uses: SonarSource/sonarqube-quality-gate-action@v1.1.0
+        env:
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
