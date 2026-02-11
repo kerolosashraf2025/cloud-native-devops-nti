@@ -1,0 +1,47 @@
+name: SonarQube Code Scan
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  sonarqube-scan:
+    name: Run SonarQube Scan
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (App)
+        run: |
+          pip install --upgrade pip
+          pip install -r app/requirements.txt
+
+      - name: Install dependencies (Mongo Writer)
+        run: |
+          pip install -r mongo-writer/requirements.txt
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=cloud-native-devops-nti
+            -Dsonar.projectName=cloud-native-devops-nti
+            -Dsonar.sources=app,mongo-writer
+            -Dsonar.language=py
+            -Dsonar.python.version=3.11
+            -Dsonar.sourceEncoding=UTF-8
+            -Dsonar.exclusions=**/__pycache__/**,**/*.css,**/*.html,**/*.js,**/static/**,**/templates/**
