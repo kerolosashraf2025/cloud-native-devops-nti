@@ -1,0 +1,108 @@
+name: Trivy Security Scan
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: eu-west-1
+  AWS_ACCOUNT_ID: 842303506852
+  ECR_SAMPLE: cloud-native-sample-app
+  ECR_WRITER: cloud-native-mongo-writer
+
+jobs:
+  trivy-scan:
+    name: Trivy Scan (Repo + Docker Images)
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ===============================
+      # Install Trivy (if missing)
+      # ===============================
+      - name: Install Trivy
+        run: |
+          if command -v trivy >/dev/null 2>&1; then
+            echo "Trivy already installed ✅"
+            trivy --version
+          else
+            echo "Installing Trivy..."
+            sudo apt-get update -y
+            sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+
+            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+            echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
+
+            sudo apt-get update -y
+            sudo apt-get install -y trivy
+
+            trivy --version
+          fi
+
+      # ===============================
+      # Scan Repo Filesystem
+      # ===============================
+      - name: Trivy Scan Repo (Filesystem)
+        run: |
+          echo "Scanning repository filesystem..."
+          trivy fs . \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --ignore-unfixed
+
+      # ===============================
+      # Configure AWS
+      # ===============================
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ===============================
+      # Login to ECR
+      # ===============================
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password | docker login \
+            --username AWS \
+            --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+      # ===============================
+      # Build Docker Images
+      # ===============================
+      - name: Set TAG
+        run: echo "TAG=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_ENV
+
+      - name: Build Sample App Image
+        run: docker build -t $ECR_SAMPLE:$TAG ./app
+
+      - name: Build Mongo Writer Image
+        run: docker build -t $ECR_WRITER:$TAG ./mongo-writer
+
+      # ===============================
+      # Scan Docker Images
+      # ===============================
+      - name: Trivy Scan Sample App Image
+        run: |
+          echo "Scanning Sample App image..."
+          trivy image $ECR_SAMPLE:$TAG \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --ignore-unfixed
+
+      - name: Trivy Scan Mongo Writer Image
+        run: |
+          echo "Scanning Mongo Writer image..."
+          trivy image $ECR_WRITER:$TAG \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --ignore-unfixed
+
+      # ===============================
+      # Success Message
+      # ===============================
+      - name: Done
+        run: echo "✅ Trivy Scan finished successfully (No HIGH/CRITICAL found)"
