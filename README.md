@@ -1,25 +1,6 @@
 ````md
 # 🚀 Cloud Native DevOps Pipeline on AWS (EKS + GitOps)
 
-![](https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif)
-
-**Cloud Native DevOps End-to-End Pipeline** using Terraform + AWS EKS + GitHub Actions + ArgoCD GitOps + External Secrets + Datadog + SonarQube + Trivy.
-
----
-
-## 🏷️ Tech Stack
-
-![AWS](https://img.shields.io/badge/AWS-EKS-orange?style=for-the-badge&logo=amazonaws)
-![Terraform](https://img.shields.io/badge/Terraform-IaC-purple?style=for-the-badge&logo=terraform)
-![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-blue?style=for-the-badge&logo=githubactions)
-![ArgoCD](https://img.shields.io/badge/ArgoCD-GitOps-red?style=for-the-badge&logo=argo)
-![Kubernetes](https://img.shields.io/badge/Kubernetes-Container%20Orchestration-blue?style=for-the-badge&logo=kubernetes)
-![Datadog](https://img.shields.io/badge/Datadog-Monitoring-purple?style=for-the-badge&logo=datadog)
-![SonarQube](https://img.shields.io/badge/SonarQube-Code%20Quality-green?style=for-the-badge&logo=sonarqube)
-![Trivy](https://img.shields.io/badge/Trivy-Security%20Scan-lightgrey?style=for-the-badge&logo=aqua)
-
----
-
 # 📌 Project Name
 
 **cloud-native-devops-nti**
