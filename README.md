@@ -1,42 +1,41 @@
 ````md
 # 🚀 Cloud Native DevOps Pipeline on AWS (EKS + GitOps)
 
-<p align="center">
-  <img src="https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif" width="700" />
-</p>
+![](https://media.giphy.com/media/3o7btPCcdNniyf0ArS/giphy.gif)
 
-<p align="center">
-  <b>Cloud Native DevOps End-to-End Pipeline</b> using Terraform + AWS EKS + GitHub Actions + ArgoCD GitOps + External Secrets + Datadog + SonarQube + Trivy.
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/AWS-EKS-orange?style=for-the-badge&logo=amazonaws" />
-  <img src="https://img.shields.io/badge/Terraform-IaC-purple?style=for-the-badge&logo=terraform" />
-  <img src="https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-blue?style=for-the-badge&logo=githubactions" />
-  <img src="https://img.shields.io/badge/ArgoCD-GitOps-red?style=for-the-badge&logo=argo" />
-  <img src="https://img.shields.io/badge/Kubernetes-Container%20Orchestration-blue?style=for-the-badge&logo=kubernetes" />
-  <img src="https://img.shields.io/badge/Datadog-Monitoring-purple?style=for-the-badge&logo=datadog" />
-  <img src="https://img.shields.io/badge/SonarQube-Code%20Quality-green?style=for-the-badge&logo=sonarqube" />
-  <img src="https://img.shields.io/badge/Trivy-Security%20Scanning-lightgrey?style=for-the-badge&logo=aqua" />
-</p>
+**Cloud Native DevOps End-to-End Pipeline** using Terraform + AWS EKS + GitHub Actions + ArgoCD GitOps + External Secrets + Datadog + SonarQube + Trivy.
 
 ---
 
-## 📌 Project Name
+## 🏷️ Tech Stack
+
+![AWS](https://img.shields.io/badge/AWS-EKS-orange?style=for-the-badge&logo=amazonaws)
+![Terraform](https://img.shields.io/badge/Terraform-IaC-purple?style=for-the-badge&logo=terraform)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-blue?style=for-the-badge&logo=githubactions)
+![ArgoCD](https://img.shields.io/badge/ArgoCD-GitOps-red?style=for-the-badge&logo=argo)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-Container%20Orchestration-blue?style=for-the-badge&logo=kubernetes)
+![Datadog](https://img.shields.io/badge/Datadog-Monitoring-purple?style=for-the-badge&logo=datadog)
+![SonarQube](https://img.shields.io/badge/SonarQube-Code%20Quality-green?style=for-the-badge&logo=sonarqube)
+![Trivy](https://img.shields.io/badge/Trivy-Security%20Scan-lightgrey?style=for-the-badge&logo=aqua)
+
+---
+
+# 📌 Project Name
+
 **cloud-native-devops-nti**
 
 ---
 
-## 🎯 Project Goal
+# 🎯 Project Goal
 
-This project implements a **full Cloud Native DevOps Pipeline** on AWS.
+This project implements a complete **Cloud Native DevOps Pipeline** on AWS.
 
-The goal is to deploy a real Microservices application with full automation:
+The goal is to deploy a real microservices application with full automation:
 
 ✅ Infrastructure Provisioning using **Terraform**  
 ✅ Containerization using **Docker**  
 ✅ CI Pipeline using **GitHub Actions** (Build + Push to ECR)  
-✅ CD Pipeline using **ArgoCD GitOps** (Auto Sync from Git)  
+✅ CD Pipeline using **ArgoCD GitOps** (Auto Deploy from Git)  
 ✅ Kubernetes Platform using **AWS EKS**  
 ✅ Secrets Management using **AWS SSM Parameter Store + External Secrets Operator (IRSA)**  
 ✅ Monitoring using **Datadog**  
@@ -47,40 +46,40 @@ Everything is automated and triggered manually using **workflow_dispatch**.
 
 ---
 
-## 🌍 Architecture Overview
+# 🌍 Architecture Overview
 
 The project runs on **AWS EKS** (Region: `eu-west-1`).
 
 The application consists of:
 
-### 1️⃣ Flask Voting App
-- Python Flask app
+## 1️⃣ Flask Voting App
+- Python Flask application
 - Runs on port **80**
-- Provides UI for voting: **Cats vs Dogs**
+- Provides voting UI (Cats vs Dogs)
 - Sends votes to Redis queue
 
-### 2️⃣ Mongo Writer Microservice
+## 2️⃣ Mongo Writer Microservice
 - Python worker service
 - Reads votes from Redis using `BLPOP`
 - Writes votes into MongoDB Atlas
 - Requires MongoDB URI as a secret
 
-### 3️⃣ Redis
-- Used as queue / message broker
-- Runs inside Kubernetes
+## 3️⃣ Redis
+- Runs as queue / message broker
+- Deployed inside Kubernetes
 
-### 4️⃣ MongoDB Atlas (External)
+## 4️⃣ MongoDB Atlas (External)
 - Fully managed external database
-- Connection URI stored securely in AWS SSM Parameter Store
+- MongoDB URI is stored securely in AWS SSM Parameter Store
 
 ---
 
-## 🏗️ High Level Workflow (End-to-End)
+# 🧠 High Level Pipeline Flow
 
 ```text
-Terraform Apply  → Creates AWS Infra
+Terraform Apply  → Creates AWS Infrastructure
 Bootstrap        → Installs ArgoCD + Ingress + ESO + Datadog + SonarQube
-SSM Secrets      → Stores Mongo URI in Parameter Store
+SSM Secrets      → Stores MongoDB URI in Parameter Store
 Build & Push     → Builds images + pushes to ECR + updates GitOps tags
 ArgoCD Sync      → Deploys new version automatically
 ````
@@ -172,7 +171,7 @@ cloud-native-devops-nti/
 
 ---
 
-# 🏛️ Architecture Diagram (Mermaid)
+# 🏛️ Architecture Diagram
 
 ```mermaid
 flowchart TB
@@ -219,22 +218,18 @@ subgraph EXT["🌍 External Services"]
 end
 
 REPO --> GHA
-
 TFW --> AWS
 BW --> K8S
 SSMW --> SSM
-
 CIW --> ECR
 CIW --> GITOPS
 
 ARGO --> APPSTACK
-
 ESO --> APPSTACK
 SSM --> ESO
 
 USER --> INGRESS
 INGRESS --> APPSTACK
-
 APPSTACK --> ATLAS
 ```
 
@@ -261,11 +256,11 @@ DEPLOY --> DONE["✅ App Running via Ingress URL"]
 
 ---
 
-# ⚙️ Infrastructure (Terraform)
+# ⚙️ Infrastructure Provisioning (Terraform)
 
 Terraform provisions the full AWS infrastructure:
 
-### 🌐 Networking Module
+## 🌐 Networking Module
 
 * VPC
 * Public Subnets + Private Subnets
@@ -273,7 +268,7 @@ Terraform provisions the full AWS infrastructure:
 * NAT Gateway
 * Route Tables
 
-### 🔐 IAM Module
+## 🔐 IAM Module
 
 * EKS Cluster Role
 * Node Group Role
@@ -283,14 +278,14 @@ Terraform provisions the full AWS infrastructure:
   * AmazonEKS_CNI_Policy
   * AmazonEC2ContainerRegistryReadOnly
 
-### ☸️ EKS Module
+## ☸️ EKS Module
 
 * EKS Cluster
 * Managed Node Group
 * OIDC Provider (for IRSA)
 * IAM Role + Policy for External Secrets Operator
 
-### 📦 ECR Repositories
+## 📦 ECR Repositories
 
 Terraform creates:
 
@@ -301,13 +296,13 @@ Terraform creates:
 
 ---
 
-# 🔐 Secrets Management
+# 🔐 Secrets Management (SSM + ESO)
 
-Instead of storing secrets inside YAML or Git, we use:
+Instead of storing secrets inside YAML or Git, this project uses:
 
-✅ AWS SSM Parameter Store (SecureString)
-✅ External Secrets Operator (ESO)
-✅ IRSA Authentication
+* AWS SSM Parameter Store (SecureString)
+* External Secrets Operator (ESO)
+* IRSA Authentication
 
 MongoDB URI is stored at:
 
@@ -315,7 +310,7 @@ MongoDB URI is stored at:
 /nonprod/sample-app/mongodb-uri
 ```
 
-ESO pulls it and generates Kubernetes Secret:
+ESO reads the parameter and creates a Kubernetes secret:
 
 ```text
 Secret name: mongo-secret
@@ -326,21 +321,19 @@ Key: MONGODB_URI
 
 # 🚀 GitOps Deployment (ArgoCD)
 
-ArgoCD is installed on the cluster.
-
-It watches:
+ArgoCD is installed on the cluster and watches:
 
 ```text
 gitops/nonprod/sample-app
 ```
 
-With sync policy enabled:
+Sync policy enabled:
 
 * Automated Sync ✅
 * Prune ✅
 * SelfHeal ✅
 
-This means any Git update will be automatically deployed.
+This means any Git update will be deployed automatically.
 
 ---
 
@@ -365,9 +358,9 @@ SonarQube is installed in namespace:
 sonarqube
 ```
 
-Accessed via LoadBalancer / Ingress.
+Accessed using LoadBalancer or Ingress.
 
-A token is created and used inside CI pipeline to run scans.
+A token is generated and used inside CI pipeline for scanning.
 
 ---
 
@@ -375,8 +368,8 @@ A token is created and used inside CI pipeline to run scans.
 
 Trivy workflow is used to scan:
 
-* filesystem (repo)
-* container images
+* Repository filesystem
+* Container images
 
 ---
 
@@ -388,7 +381,7 @@ Trivy workflow is used to scan:
 | Bootstrap Cluster | bootstrap.yml                    | Install ingress-nginx, ArgoCD, ESO, Datadog, SonarQube |
 | Store Secrets     | ssm-secrets.yml                  | Put MongoDB URI in AWS SSM                             |
 | CI Build & Push   | build-and-push.yaml              | Build Docker images + push to ECR + update GitOps tag  |
-| SonarQube Scan    | sonarqube-scan.yml               | Scan code quality                                      |
+| SonarQube Scan    | sonarqube-scan.yml               | Code quality scan                                      |
 | Trivy Scan        | trivy-scan.yml                   | Security scan                                          |
 | Image Updater     | install-argocd-image-updater.yml | Install ArgoCD Image Updater                           |
 
@@ -396,7 +389,7 @@ Trivy workflow is used to scan:
 
 # 🧪 How To Run The Project (Step-by-Step)
 
-> All steps are executed manually from GitHub Actions.
+All steps are executed manually from GitHub Actions.
 
 ---
 
@@ -430,15 +423,15 @@ Run workflow:
 bootstrap.yml
 ```
 
-It will:
+This workflow will:
 
 * Install kubectl + helm
 * Update kubeconfig
 * Create namespaces
 * Install ingress-nginx
 * Install ArgoCD
-* Install Datadog
 * Install External Secrets Operator
+* Install Datadog
 * Install SonarQube
 * Apply ArgoCD applications
 
@@ -476,9 +469,9 @@ build-and-push.yaml
 This workflow will:
 
 * Build Docker images
-* Tag with commit SHA
+* Tag images with commit SHA
 * Push images to ECR
-* Update GitOps kustomization.yaml
+* Update GitOps `kustomization.yaml`
 * Commit and push changes
 
 ArgoCD will auto-sync and deploy automatically 🚀
@@ -487,21 +480,21 @@ ArgoCD will auto-sync and deploy automatically 🚀
 
 # 🌍 Application Access
 
-### Sample App URL
+After bootstrap, access services using the LoadBalancer DNS:
 
-Available via Ingress LoadBalancer DNS:
+## Sample App URL
 
 ```text
 http://<INGRESS-LB-DNS>
 ```
 
-### ArgoCD URL
+## ArgoCD URL
 
 ```text
 http://<ARGOCD-LB-DNS>
 ```
 
-### SonarQube URL
+## SonarQube URL
 
 ```text
 http://<SONARQUBE-LB-DNS>:9000
@@ -511,7 +504,7 @@ http://<SONARQUBE-LB-DNS>:9000
 
 # 🧨 Destroy / Cleanup
 
-Run:
+Run workflow:
 
 ```text
 terraform.yml
@@ -522,7 +515,7 @@ Input:
 * `destroy`
 
 ⚠️ Important note: AWS LoadBalancers created by ingress may block VPC deletion.
-You must ensure LoadBalancers + TargetGroups are removed before destroying VPC.
+You must delete LoadBalancers + TargetGroups before destroying VPC.
 
 ---
 
@@ -533,7 +526,6 @@ You must ensure LoadBalancers + TargetGroups are removed before destroying VPC.
 
 ```bash
 git pull origin main --rebase
-# resolve conflicts
 git add .
 git rebase --continue
 git push origin main
@@ -545,7 +537,7 @@ git push origin main
   <summary>❌ ArgoCD App Synced but Degraded</summary>
 
 Cause: pods failing due to wrong image tags.
-Fix: update kustomization.yaml with valid ECR tag.
+Fix: update GitOps kustomization.yaml with correct ECR tag.
 
 </details>
 
@@ -553,7 +545,7 @@ Fix: update kustomization.yaml with valid ECR tag.
   <summary>❌ ImagePullBackOff / ErrImagePull</summary>
 
 Cause: image tag does not exist in ECR.
-Fix: build-and-push workflow updates the tag automatically.
+Fix: build-and-push workflow updates tag automatically.
 
 </details>
 
@@ -563,7 +555,7 @@ Fix: build-and-push workflow updates the tag automatically.
 Cause:
 
 * Missing SSM parameter
-* Wrong IRSA role annotation
+* Wrong IRSA configuration
 
 Fix:
 
@@ -587,12 +579,12 @@ Fix: delete LBs/TargetGroups first then destroy EKS then VPC.
 
 🚀 Ideas to make the project even more production-ready:
 
-* Add multi-environment GitOps (nonprod/prod)
-* Add Vault integration for secrets
-* Add Blue/Green or Canary deployments
-* Add Slack notifications from GitHub Actions
-* Add Helm charts instead of raw YAML
-* Add RBAC + Network Policies hardening
+* Multi-environment GitOps (nonprod/prod)
+* Vault integration for secrets
+* Blue/Green or Canary deployments
+* Slack notifications from GitHub Actions
+* Helm chart packaging
+* RBAC + Network Policies hardening
 
 ---
 
@@ -603,11 +595,9 @@ Cloud Native DevOps Engineer
 
 ---
 
-<p align="center">
-  <img src="https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif" width="400"/>
-</p>
+![](https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif)
 
-<p align="center">
-  <b>🔥 Fully Automated Cloud Native DevOps Pipeline 🔥</b>
-</p>
+🔥 **Fully Automated Cloud Native DevOps Pipeline** 🔥
+
+```
 ```
