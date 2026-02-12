@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ==========================
-      # Cache Trivy DB (Makes scan much faster)
+      # Cache Trivy DB
       # ==========================
       - name: Cache Trivy DB
         uses: actions/cache@v4
@@ -40,7 +40,7 @@ jobs:
           version: "v0.56.2"
 
       # ==========================
-      # Scan Repo Filesystem (FAST MODE)
+      # Trivy Scan Repo (Filesystem)
       # ==========================
       - name: Trivy Scan Repo (Filesystem)
         uses: aquasecurity/trivy-action@master
@@ -73,26 +73,55 @@ jobs:
             --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
       # ==========================
-      # Get Latest Tag from GitOps
+      # Get Latest Tag from ECR (Sample App)
       # ==========================
-      - name: Get Latest Tag from GitOps
+      - name: Get Latest Tag from ECR (Sample App)
         run: |
-          TAG=$(grep "newTag:" gitops/nonprod/sample-app/kustomization.yaml | head -n 1 | awk '{print $2}')
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "Using TAG: $TAG"
+          echo "Getting latest tag from ECR repository: $ECR_SAMPLE"
+
+          TAG=$(aws ecr describe-images \
+            --repository-name $ECR_SAMPLE \
+            --region $AWS_REGION \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+            --output text)
+
+          if [ -z "$TAG" ] || [ "$TAG" = "None" ]; then
+            echo "ERROR: Could not fetch latest tag for $ECR_SAMPLE"
+            exit 1
+          fi
+
+          echo "SAMPLE_TAG=$TAG" >> $GITHUB_ENV
+          echo "Latest Sample App Tag: $TAG"
 
       # ==========================
-      # Pull & Scan Sample App Image (FAST MODE)
+      # Get Latest Tag from ECR (Mongo Writer)
       # ==========================
-      - name: Trivy Scan Sample App Image
+      - name: Get Latest Tag from ECR (Mongo Writer)
+        run: |
+          echo "Getting latest tag from ECR repository: $ECR_WRITER"
+
+          TAG=$(aws ecr describe-images \
+            --repository-name $ECR_WRITER \
+            --region $AWS_REGION \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+            --output text)
+
+          if [ -z "$TAG" ] || [ "$TAG" = "None" ]; then
+            echo "ERROR: Could not fetch latest tag for $ECR_WRITER"
+            exit 1
+          fi
+
+          echo "WRITER_TAG=$TAG" >> $GITHUB_ENV
+          echo "Latest Mongo Writer Tag: $TAG"
+
+      # ==========================
+      # Scan Sample App Image
+      # ==========================
+      - name: Trivy Scan Sample App Image (Latest)
         timeout-minutes: 10
         run: |
-          echo "======================================="
-          echo "Scanning Sample App Image..."
-          echo "======================================="
-
-          IMAGE=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_SAMPLE:$TAG
-          echo "Pulling image: $IMAGE"
+          IMAGE=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_SAMPLE:$SAMPLE_TAG
+          echo "Scanning image: $IMAGE"
 
           docker pull $IMAGE
 
@@ -103,17 +132,13 @@ jobs:
             --format table
 
       # ==========================
-      # Pull & Scan Mongo Writer Image (FAST MODE)
+      # Scan Mongo Writer Image
       # ==========================
-      - name: Trivy Scan Mongo Writer Image
+      - name: Trivy Scan Mongo Writer Image (Latest)
         timeout-minutes: 10
         run: |
-          echo "======================================="
-          echo "Scanning Mongo Writer Image..."
-          echo "======================================="
-
-          IMAGE=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_WRITER:$TAG
-          echo "Pulling image: $IMAGE"
+          IMAGE=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_WRITER:$WRITER_TAG
+          echo "Scanning image: $IMAGE"
 
           docker pull $IMAGE
 
