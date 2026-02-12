@@ -13,6 +13,7 @@ jobs:
   trivy-scan:
     name: Trivy Security Scan
     runs-on: self-hosted
+    timeout-minutes: 30
 
     steps:
       # ==========================
@@ -20,6 +21,15 @@ jobs:
       # ==========================
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # ==========================
+      # Cache Trivy DB (Makes scan much faster)
+      # ==========================
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-cache
 
       # ==========================
       # Install Trivy
@@ -30,7 +40,7 @@ jobs:
           version: "v0.56.2"
 
       # ==========================
-      # Scan Repo Filesystem
+      # Scan Repo Filesystem (FAST MODE)
       # ==========================
       - name: Trivy Scan Repo (Filesystem)
         uses: aquasecurity/trivy-action@master
@@ -40,6 +50,8 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "0"
           format: table
+          timeout: 10m
+          scanners: vuln
 
       # ==========================
       # Configure AWS Credentials
@@ -70,9 +82,10 @@ jobs:
           echo "Using TAG: $TAG"
 
       # ==========================
-      # Pull & Scan Sample App Image
+      # Pull & Scan Sample App Image (FAST MODE)
       # ==========================
       - name: Trivy Scan Sample App Image
+        timeout-minutes: 10
         run: |
           echo "======================================="
           echo "Scanning Sample App Image..."
@@ -83,12 +96,17 @@ jobs:
 
           docker pull $IMAGE
 
-          trivy image $IMAGE --severity HIGH,CRITICAL --exit-code 0 --format table
+          trivy image $IMAGE \
+            --severity HIGH,CRITICAL \
+            --scanners vuln \
+            --exit-code 0 \
+            --format table
 
       # ==========================
-      # Pull & Scan Mongo Writer Image
+      # Pull & Scan Mongo Writer Image (FAST MODE)
       # ==========================
       - name: Trivy Scan Mongo Writer Image
+        timeout-minutes: 10
         run: |
           echo "======================================="
           echo "Scanning Mongo Writer Image..."
@@ -99,4 +117,8 @@ jobs:
 
           docker pull $IMAGE
 
-          trivy image $IMAGE --severity HIGH,CRITICAL --exit-code 0 --format table
+          trivy image $IMAGE \
+            --severity HIGH,CRITICAL \
+            --scanners vuln \
+            --exit-code 0 \
+            --format table
